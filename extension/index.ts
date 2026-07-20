@@ -1,8 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { formatHitsToon } from "/var/home/marcin/Repo/agent-kb/src/format.ts";
-import { createStore } from "/var/home/marcin/Repo/agent-kb/src/store.ts";
-import type { KbRecord } from "/var/home/marcin/Repo/agent-kb/src/types.ts";
+import { createStore, type KbStore } from "/var/home/marcin/Repo/agent-kb/src/store.ts";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; details?: unknown; isError?: boolean };
 
@@ -15,7 +14,7 @@ ${body}` }], details };
 function fail(message: string, details?: unknown): ToolResult {
   return { content: [{ type: "text", text: message }], details, isError: true };
 }
-function withStore<T>(fn: (store: ReturnType<typeof createStore>) => T): T {
+function withStore<T>(fn: (store: KbStore) => T): T {
   const store = createStore();
   try { return fn(store); } finally { store.dispose(); }
 }
@@ -28,37 +27,53 @@ const SearchParams = Type.Object({
   limit: Type.Optional(Type.Number()),
 });
 const GetParams = Type.Object({ id: Type.String() });
+const RecordTypeParam = Type.Union([
+  Type.Literal("handoff"), Type.Literal("decision"), Type.Literal("procedure"),
+  Type.Literal("troubleshoot"), Type.Literal("landscape"), Type.Literal("preference"),
+  Type.Literal("proposal"),
+]);
+const DurableTypeParam = Type.Union([
+  Type.Literal("decision"), Type.Literal("procedure"), Type.Literal("troubleshoot"),
+  Type.Literal("landscape"), Type.Literal("preference"),
+]);
+const ConfidenceParam = Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")]);
+const SourceParam = Type.Union([
+  Type.Literal("user"), Type.Literal("agent_promoted"), Type.Literal("import"), Type.Literal("agent"),
+]);
 const UpsertParams = Type.Object({
   id: Type.String(),
-  type: Type.String(),
+  type: RecordTypeParam,
   title: Type.String(),
   status: Type.Optional(Type.String()),
   project: Type.Optional(Type.String()),
   tags: Type.Optional(Type.Array(Type.String())),
   summary: Type.Optional(Type.String()),
   body: Type.Optional(Type.String()),
-  confidence: Type.Optional(Type.String()),
+  confidence: Type.Optional(ConfidenceParam),
   evidence: Type.Optional(Type.Array(Type.String())),
-  source: Type.Optional(Type.String()),
+  source: Type.Optional(SourceParam),
   forceDurable: Type.Optional(Type.Boolean()),
 });
 const PromoteParams = Type.Object({
   proposalId: Type.String(),
   id: Type.Optional(Type.String()),
-  type: Type.String(),
+  type: DurableTypeParam,
   title: Type.Optional(Type.String()),
-  status: Type.Optional(Type.String()),
+  status: Type.Optional(Type.Union([Type.Literal("active"), Type.Literal("done")])),
   project: Type.Optional(Type.String()),
   tags: Type.Optional(Type.Array(Type.String())),
   summary: Type.Optional(Type.String()),
   body: Type.Optional(Type.String()),
-  confidence: Type.Optional(Type.String()),
+  confidence: Type.Optional(ConfidenceParam),
   evidence: Type.Optional(Type.Array(Type.String())),
   last_verified_at: Type.Optional(Type.String()),
 });
 const CloseParams = Type.Object({ id: Type.String(), status: Type.Optional(Type.String()) });
 const SupersedeParams = Type.Object({ oldId: Type.String(), newId: Type.String() });
-const PurgeParams = Type.Object({ staleDays: Type.Optional(Type.Number()) });
+const PurgeParams = Type.Object({ staleDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 36500 })) });
+const MaintainParams = Type.Object({ staleDays: Type.Optional(Type.Integer({ minimum: 1, maximum: 36500 })) });
+const ArchiveParams = Type.Object({ id: Type.String() });
+const RestoreParams = Type.Object({ id: Type.String(), status: Type.String() });
 const StatusParams = Type.Object({});
 
 export default function agentKbExtension(pi: ExtensionAPI) {
@@ -75,7 +90,7 @@ export default function agentKbExtension(pi: ExtensionAPI) {
     parameters: SearchParams,
     async execute(_id, params) {
       try {
-        const hits = withStore((s) => s.search(params.query ?? "", params)) as KbRecord[];
+        const hits = withStore((s) => s.search(params.query ?? "", params));
         return ok("## agent-KB search", hits, formatHitsToon(hits));
       } catch (err) { return fail(`agent-KB search failed: ${err instanceof Error ? err.message : String(err)}`); }
     },
@@ -104,7 +119,7 @@ export default function agentKbExtension(pi: ExtensionAPI) {
     ],
     parameters: UpsertParams,
     async execute(_id, params) {
-      try { return ok("## agent-KB upsert OK", withStore((s) => s.upsert(params as any, { forceDurable: Boolean(params.forceDurable) }))); }
+      try { return ok("## agent-KB upsert OK", withStore((s) => s.upsert(params, { forceDurable: Boolean(params.forceDurable) }))); }
       catch (err) { return fail(`agent-KB upsert failed: ${err instanceof Error ? err.message : String(err)}`); }
     },
   });
@@ -119,7 +134,7 @@ export default function agentKbExtension(pi: ExtensionAPI) {
     ],
     parameters: PromoteParams,
     async execute(_id, params) {
-      try { return ok("## agent-KB promote OK", withStore((s) => s.promote(params.proposalId, params as any))); }
+      try { return ok("## agent-KB promote OK", withStore((s) => s.promote(params.proposalId, params))); }
       catch (err) { return fail(`agent-KB promote failed: ${err instanceof Error ? err.message : String(err)}`); }
     },
   });
@@ -143,6 +158,39 @@ export default function agentKbExtension(pi: ExtensionAPI) {
     async execute(_id, params) {
       try { return ok("## agent-KB supersede OK", withStore((s) => s.supersede(params.oldId, params.newId))); }
       catch (err) { return fail(`agent-KB supersede failed: ${err instanceof Error ? err.message : String(err)}`); }
+    },
+  });
+  pi.registerTool({
+    name: "kb_maintain",
+    label: "KB Maintenance Report",
+    description: "Read-only categorized lifecycle, verification, linkage, database-size, and quick-check report. Never returns record bodies.",
+    promptSnippet: "Review agent-KB maintenance categories",
+    parameters: MaintainParams,
+    async execute(_id, params) {
+      try { return ok("## agent-KB maintenance report", withStore((s) => s.maintain(params.staleDays ?? 14))); }
+      catch (err) { return fail(`agent-KB maintain failed: ${err instanceof Error ? err.message : String(err)}`); }
+    },
+  });
+  pi.registerTool({
+    name: "kb_archive",
+    label: "KB Archive Terminal Record",
+    description: "Reversibly archive one terminal record. Active/open/blocked and active durable records are refused.",
+    promptSnippet: "Archive a terminal agent-KB record",
+    parameters: ArchiveParams,
+    async execute(_id, params) {
+      try { return ok("## agent-KB archive OK", withStore((s) => s.archive(params.id))); }
+      catch (err) { return fail(`agent-KB archive failed: ${err instanceof Error ? err.message : String(err)}`); }
+    },
+  });
+  pi.registerTool({
+    name: "kb_restore",
+    label: "KB Restore Archived Record",
+    description: "Restore one archived record to a status allowed by its record type.",
+    promptSnippet: "Restore an archived agent-KB record",
+    parameters: RestoreParams,
+    async execute(_id, params) {
+      try { return ok("## agent-KB restore OK", withStore((s) => s.restore(params.id, params.status))); }
+      catch (err) { return fail(`agent-KB restore failed: ${err instanceof Error ? err.message : String(err)}`); }
     },
   });
   pi.registerTool({

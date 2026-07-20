@@ -9,7 +9,8 @@
     "kb": "node ./src/cli.ts",
     "smoke": "node ./src/cli.ts init",
     "smoke:search": "node ./scripts/smoke-hybrid-search.mjs",
-    "smoke:toon": "node ./scripts/smoke-toon-format.mjs"
+    "smoke:toon": "node ./scripts/smoke-toon-format.mjs",
+    "smoke:maintenance": "node ./scripts/smoke-maintenance.mjs"
   },
   "engines": {
     "node": ">=26"

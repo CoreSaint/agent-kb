@@ -1,10 +1,32 @@
-import type { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
+import { chmodSync, closeSync, lstatSync, openSync, statSync, unlinkSync } from "node:fs";
+import { resolve } from "node:path";
+import { backup, DatabaseSync } from "node:sqlite";
 import { openDb, kbPath } from "./db.ts";
 import { assertNoObviousSecrets } from "./secrets.ts";
-import { allowedStatuses, confidences, defaultStatus, durableTypes, recordTypes, sources, type DurableType, type KbRecord, type PromoteInput, type RecordType, type Source, type UpsertInput } from "./types.ts";
+import {
+  allowedStatuses,
+  confidences,
+  defaultStatus,
+  durableTypes,
+  recordTypes,
+  sources,
+  type BackupResult,
+  type DurableType,
+  type KbRecord,
+  type MaintenanceReport,
+  type PromoteInput,
+  type PromotedProposalSummary,
+  type PruneCandidate,
+  type PruneResult,
+  type RecordSummary,
+  type RecordType,
+  type Source,
+  type UpsertInput,
+} from "./types.ts";
 
 function now(): string { return new Date().toISOString(); }
-function includes<T extends readonly string[]>(list: T, value: string): value is T[number] { return list.includes(value as T[number]); }
+function includes<T extends readonly string[]>(list: T, value: string): value is T[number] { return list.some((item) => item === value); }
 function parseJsonArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String);
   if (typeof value !== "string" || !value.trim()) return [];
@@ -12,8 +34,47 @@ function parseJsonArray(value: unknown): string[] {
   if (!Array.isArray(parsed)) throw new Error("Expected JSON array");
   return parsed.map(String);
 }
-function rowToRecord(row: any): KbRecord {
-  return { ...row, tags: parseJsonArray(row.tags), evidence: parseJsonArray(row.evidence) } as KbRecord;
+function objectRow(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Expected SQLite row object.");
+  }
+  return value;
+}
+function stringField(row: Record<string, unknown>, name: string): string {
+  const value = row[name];
+  if (typeof value !== "string") throw new Error(`Expected string field '${name}'.`);
+  return value;
+}
+function nullableStringField(row: Record<string, unknown>, name: string): string | null {
+  const value = row[name];
+  if (value !== null && typeof value !== "string") throw new Error(`Expected nullable string field '${name}'.`);
+  return value;
+}
+function rowToRecord(value: unknown): KbRecord {
+  const row = objectRow(value);
+  const type = stringField(row, "type");
+  const confidence = stringField(row, "confidence");
+  const source = stringField(row, "source");
+  assertType(type);
+  assertConfidence(confidence);
+  assertSource(source);
+  return {
+    id: stringField(row, "id"),
+    type,
+    title: stringField(row, "title"),
+    status: stringField(row, "status"),
+    project: nullableStringField(row, "project"),
+    tags: parseJsonArray(row.tags),
+    body: stringField(row, "body"),
+    summary: stringField(row, "summary"),
+    confidence,
+    evidence: parseJsonArray(row.evidence),
+    supersedes: nullableStringField(row, "supersedes"),
+    created_at: stringField(row, "created_at"),
+    updated_at: stringField(row, "updated_at"),
+    last_verified_at: nullableStringField(row, "last_verified_at"),
+    source,
+  };
 }
 function assertType(type: string): asserts type is RecordType {
   if (!includes(recordTypes, type)) throw new Error(`Invalid type '${type}'.`);
@@ -175,13 +236,88 @@ function slug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "record";
 }
 
+const DAY_MS = 86_400_000;
+const BACKUP_FRESH_MS = 15 * 60_000;
+const BACKUP_MARKER_KEY = "maintenance_backup_v1";
+const DURABLE_SQL = "'decision','procedure','troubleshoot','landscape','preference'";
+
+interface BackupMarker {
+  format: 1;
+  source_path: string;
+  source_signature: string;
+  created_at: string;
+}
+
+function assertPositiveDays(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 36_500) {
+    throw new Error(`${name} must be an integer from 1 to 36500.`);
+  }
+}
+
+function assertIsoCalendarDate(value: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error("date must use YYYY-MM-DD.");
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new Error(`Invalid calendar date '${value}'.`);
+  }
+}
+
+function rowToSummary(value: unknown): RecordSummary {
+  const row = objectRow(value);
+  const type = stringField(row, "type");
+  assertType(type);
+  return {
+    id: stringField(row, "id"),
+    type,
+    status: stringField(row, "status"),
+    title: stringField(row, "title"),
+    updated_at: stringField(row, "updated_at"),
+    last_verified_at: nullableStringField(row, "last_verified_at"),
+  };
+}
+
+function quickCheck(db: DatabaseSync): string {
+  const row = objectRow(db.prepare("PRAGMA quick_check").get());
+  return stringField(row, "quick_check");
+}
+
+function parseBackupMarker(value: unknown): BackupMarker {
+  if (typeof value !== "string") throw new Error("Backup lacks a maintenance validation marker.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error("Backup has an invalid maintenance validation marker.", { cause: error });
+  }
+  const marker = objectRow(parsed);
+  if (
+    marker.format !== 1
+    || typeof marker.source_path !== "string"
+    || typeof marker.source_signature !== "string"
+    || typeof marker.created_at !== "string"
+  ) {
+    throw new Error("Backup has an invalid maintenance validation marker.");
+  }
+  return {
+    format: 1,
+    source_path: marker.source_path,
+    source_signature: marker.source_signature,
+    created_at: marker.created_at,
+  };
+}
+
 export class KbStore {
   db: DatabaseSync;
 
-  constructor(db: DatabaseSync = openDb()) {
+  private readonly dbPath: string;
+
+  constructor(db: DatabaseSync = openDb(), path = kbPath()) {
     this.db = db;
+    this.dbPath = resolve(path);
   }
-  path(): string { return kbPath(); }
+  path(): string { return this.dbPath; }
   dispose(): void { this.db.close(); }
   init(): { path: string; schemaVersion: number } { return { path: this.path(), schemaVersion: 1 }; }
 
@@ -195,7 +331,7 @@ export class KbStore {
     if (!input.title?.trim()) throw new Error("title is required.");
     assertType(input.type);
     const existing = this.get(input.id);
-    const durableNew = durableTypes.includes(input.type as DurableType) && !existing;
+    const durableNew = includes(durableTypes, input.type) && !existing;
     if (durableNew && !opts.forceDurable) throw new Error("New durable records require forceDurable/--durable; agents should create proposals then promote.");
     if (existing && existing.type !== input.type) throw new Error(`Cannot change type for existing record ${input.id} (${existing.type} -> ${input.type}).`);
     const status = input.status ?? existing?.status ?? defaultStatus(input.type);
@@ -222,7 +358,9 @@ export class KbStore {
     this.db.prepare(`INSERT INTO records (id,type,title,status,project,tags,body,summary,confidence,evidence,supersedes,created_at,updated_at,last_verified_at,source)
       VALUES (@id,@type,@title,@status,@project,@tags,@body,@summary,@confidence,@evidence,@supersedes,@created_at,@updated_at,@last_verified_at,@source)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title,status=excluded.status,project=excluded.project,tags=excluded.tags,body=excluded.body,summary=excluded.summary,confidence=excluded.confidence,evidence=excluded.evidence,supersedes=excluded.supersedes,updated_at=excluded.updated_at,last_verified_at=excluded.last_verified_at,source=excluded.source`).run(record);
-    return this.get(input.id)!;
+    const saved = this.get(input.id);
+    if (!saved) throw new Error(`Failed to read saved record ${input.id}.`);
+    return saved;
   }
 
   promote(sourceId: string, input: PromoteInput, opts: { allowHandoff?: boolean } = {}): KbRecord {
@@ -256,7 +394,7 @@ export class KbStore {
     if (!old) throw new Error(`Old record not found: ${oldId}.`);
     if (!this.get(newId)) throw new Error(`New record not found: ${newId}.`);
     const status = old.type === "decision" ? "superseded" : allowedStatuses[old.type].includes("deprecated") ? "deprecated" : "archived";
-    return this.upsert({ ...old, status, supersedes: newId }, { forceDurable: durableTypes.includes(old.type as DurableType) });
+    return this.upsert({ ...old, status, supersedes: newId }, { forceDurable: includes(durableTypes, old.type) });
   }
 
   /**
@@ -296,10 +434,9 @@ export class KbStore {
       try {
         const clauses = [...filterClauses, "records_fts MATCH @query"];
         const where = `WHERE ${clauses.join(" AND ")}`;
-        const rows = this.db.prepare(
+        return this.db.prepare(
           `SELECT r.id AS id FROM records_fts f JOIN records r ON r.id = f.id ${where} ORDER BY bm25(records_fts), r.updated_at DESC LIMIT @pool`,
-        ).all({ ...filterParams, query: matchExpr, pool }) as Array<{ id: string }>;
-        return rows.map((r) => r.id);
+        ).all({ ...filterParams, query: matchExpr, pool }).map((value) => stringField(objectRow(value), "id"));
       } catch {
         // Invalid or unsupported FTS expression for this query shape — skip the list.
         return [];
@@ -351,13 +488,273 @@ export class KbStore {
     return ranked.slice(0, limit).map((x) => x.rec);
   }
 
+  maintain(staleDays = 14): MaintenanceReport {
+    assertPositiveDays(staleDays, "stale-days");
+    const cutoff = new Date(Date.now() - staleDays * DAY_MS).toISOString();
+    const summaryColumns = "id,type,status,title,updated_at,last_verified_at";
+    const summaries = (where: string, params: Record<string, string> = {}): RecordSummary[] =>
+      this.db.prepare(`SELECT ${summaryColumns} FROM records WHERE ${where} ORDER BY updated_at ASC,id ASC`).all(params).map(rowToSummary);
+
+    const promoted = summaries("type='proposal' AND status='promoted'");
+    const targets = this.db.prepare(
+      `SELECT supersedes AS proposal_id,id AS target_id FROM records
+       WHERE type IN (${DURABLE_SQL}) AND supersedes IN
+       (SELECT id FROM records WHERE type='proposal' AND status='promoted')
+       ORDER BY id`,
+    ).all();
+    const targetsByProposal = new Map<string, string[]>();
+    for (const value of targets) {
+      const row = objectRow(value);
+      const proposalId = stringField(row, "proposal_id");
+      const existing = targetsByProposal.get(proposalId);
+      const targetId = stringField(row, "target_id");
+      if (existing) existing.push(targetId);
+      else targetsByProposal.set(proposalId, [targetId]);
+    }
+    const promotedProposals: PromotedProposalSummary[] = promoted.map((proposal) => {
+      const durableTargetIds = targetsByProposal.get(proposal.id) ?? [];
+      return {
+        ...proposal,
+        durable_target_ids: durableTargetIds,
+        has_exactly_one_durable_target: durableTargetIds.length === 1,
+      };
+    });
+
+    return {
+      generated_at: now(),
+      stale_days: staleDays,
+      database: {
+        path: this.path(),
+        size_bytes: statSync(this.path()).size,
+        quick_check: quickCheck(this.db),
+      },
+      stale_open_or_blocked_handoffs: summaries("type='handoff' AND status IN ('open','blocked') AND updated_at < @cutoff", { cutoff }),
+      promoted_proposals: promotedProposals,
+      rejected_proposals: summaries("type='proposal' AND status='rejected'"),
+      closed_or_archived_handoffs: summaries("type='handoff' AND status IN ('closed','archived')"),
+      inactive_durable_records: summaries(`type IN (${DURABLE_SQL}) AND status IN ('deprecated','superseded','archived')`),
+      active_durable_missing_verification: summaries(`type IN (${DURABLE_SQL}) AND status IN ('active','done') AND last_verified_at IS NULL`),
+    };
+  }
+
+  private lifecycleSummary(id: string): RecordSummary {
+    const row = this.db.prepare(
+      "SELECT id,type,status,title,updated_at,last_verified_at FROM records WHERE id = ?",
+    ).get(id);
+    if (!row) throw new Error(`Record not found: ${id}.`);
+    return rowToSummary(row);
+  }
+
+  archive(id: string): RecordSummary {
+    const record = this.lifecycleSummary(id);
+    const allowed =
+      (record.type === "handoff" && record.status === "closed")
+      || (record.type === "proposal" && (record.status === "promoted" || record.status === "rejected"))
+      || (record.type === "decision" && record.status === "superseded")
+      || ((record.type === "procedure" || record.type === "landscape" || record.type === "preference") && record.status === "deprecated")
+      || (record.type === "troubleshoot" && (record.status === "done" || record.status === "deprecated"));
+    if (!allowed) {
+      throw new Error(`Cannot archive ${record.type} '${id}' from status '${record.status}'. Only terminal records may be archived.`);
+    }
+    this.db.prepare("UPDATE records SET status='archived',updated_at=? WHERE id=?").run(now(), id);
+    return this.lifecycleSummary(id);
+  }
+
+  restore(id: string, status: string): RecordSummary {
+    const record = this.lifecycleSummary(id);
+    if (record.status !== "archived") throw new Error(`Restore requires archived status; '${id}' is '${record.status}'.`);
+    assertStatus(record.type, status);
+    if (status === "archived") throw new Error("Restore status must differ from archived.");
+    this.db.prepare("UPDATE records SET status=?,updated_at=? WHERE id=?").run(status, now(), id);
+    return this.lifecycleSummary(id);
+  }
+
+  verify(id: string, date: string): RecordSummary {
+    assertIsoCalendarDate(date);
+    this.lifecycleSummary(id);
+    this.db.prepare("UPDATE records SET last_verified_at=?,updated_at=? WHERE id=?").run(date, now(), id);
+    return this.lifecycleSummary(id);
+  }
+
+  private databaseSignature(db: DatabaseSync): string {
+    const metadata = db.prepare(
+      "SELECT id,type,status,updated_at,last_verified_at,supersedes FROM records ORDER BY id",
+    ).all();
+    return createHash("sha256").update(JSON.stringify(metadata)).digest("hex");
+  }
+
+  async backup(output?: string): Promise<BackupResult> {
+    const createdAt = now();
+    const generated = `${this.path()}.backup-${createdAt.replaceAll(/[-:.]/g, "")}.sqlite`;
+    if (output !== undefined && (!output.trim() || output.includes("\0"))) {
+      throw new Error("Backup output must be a non-empty filesystem path.");
+    }
+    const destination = resolve(output ?? generated);
+    if (destination === this.path()) throw new Error("Backup output must differ from the source database.");
+
+    let reserved = false;
+    try {
+      const fd = openSync(destination, "wx", 0o600);
+      closeSync(fd);
+      reserved = true;
+      await backup(this.db, destination);
+
+      const backupDb = new DatabaseSync(destination);
+      try {
+        const sourceSignature = this.databaseSignature(this.db);
+        const backupSignature = this.databaseSignature(backupDb);
+        if (sourceSignature !== backupSignature) throw new Error("Backup does not match current source metadata.");
+        const marker: BackupMarker = {
+          format: 1,
+          source_path: this.path(),
+          source_signature: sourceSignature,
+          created_at: createdAt,
+        };
+        backupDb.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)").run(BACKUP_MARKER_KEY, JSON.stringify(marker));
+        if (quickCheck(backupDb) !== "ok") throw new Error("Backup quick_check failed.");
+      } finally {
+        backupDb.close();
+      }
+      chmodSync(destination, 0o600);
+      return { path: destination, created_at: createdAt, size_bytes: statSync(destination).size, quick_check: "ok" };
+    } catch (error) {
+      if (reserved) {
+        try {
+          unlinkSync(destination);
+        } catch (cleanupError) {
+          throw new Error(`Backup failed and cleanup of '${destination}' also failed.`, { cause: new AggregateError([error, cleanupError]) });
+        }
+      }
+      if (!reserved && typeof error === "object" && error !== null && Reflect.get(error, "code") === "EEXIST") {
+        throw new Error(`Backup output already exists: ${destination}.`, { cause: error });
+      }
+      throw error;
+    }
+  }
+
+  private validateFreshBackup(path: string): string {
+    if (!path.trim() || path.includes("\0")) throw new Error("backup must be a non-empty filesystem path.");
+    const backupPath = resolve(path);
+    if (backupPath === this.path()) throw new Error("The live source database is not a backup.");
+    const file = lstatSync(backupPath);
+    if (!file.isFile()) throw new Error("Backup path must name a regular file.");
+    if ((file.mode & 0o077) !== 0) throw new Error("Backup permissions are not private.");
+
+    const backupDb = new DatabaseSync(backupPath, { readOnly: true });
+    try {
+      if (quickCheck(backupDb) !== "ok") throw new Error("Backup quick_check failed.");
+      const markerValue = backupDb.prepare("SELECT value FROM meta WHERE key=?").get(BACKUP_MARKER_KEY);
+      if (!markerValue) throw new Error("Backup lacks a maintenance validation marker.");
+      const marker = parseBackupMarker(objectRow(markerValue).value);
+      if (resolve(marker.source_path) !== this.path()) throw new Error("Backup was produced for a different source database.");
+      const createdMs = Date.parse(marker.created_at);
+      const age = Date.now() - createdMs;
+      if (!Number.isFinite(createdMs) || age < -60_000 || age > BACKUP_FRESH_MS) {
+        throw new Error("Backup is not fresh; create one within 15 minutes of prune --apply.");
+      }
+      const sourceSignature = this.databaseSignature(this.db);
+      const backupSignature = this.databaseSignature(backupDb);
+      if (marker.source_signature !== sourceSignature || backupSignature !== sourceSignature) {
+        throw new Error("Backup no longer matches the source database state.");
+      }
+      return backupPath;
+    } finally {
+      backupDb.close();
+    }
+  }
+
+  pruneCandidates(): PruneCandidate[] {
+    const promotedCutoff = new Date(Date.now() - 30 * DAY_MS).toISOString();
+    const terminalCutoff = new Date(Date.now() - 90 * DAY_MS).toISOString();
+    const rows = this.db.prepare(
+      `SELECT r.id,r.type,r.status,r.updated_at,
+        (SELECT COUNT(*) FROM records d WHERE d.supersedes=r.id AND d.type IN (${DURABLE_SQL})) AS target_count,
+        (SELECT MIN(d.id) FROM records d WHERE d.supersedes=r.id AND d.type IN (${DURABLE_SQL})) AS target_id
+       FROM records r
+       WHERE (r.type='proposal' AND r.status IN ('promoted','archived') AND r.updated_at<=@promoted_cutoff)
+          OR (r.type='proposal' AND r.status='rejected' AND r.updated_at<=@terminal_cutoff)
+          OR (r.type='handoff' AND r.status='archived' AND r.updated_at<=@terminal_cutoff)
+       ORDER BY r.id`,
+    ).all({ promoted_cutoff: promotedCutoff, terminal_cutoff: terminalCutoff });
+    const candidates: PruneCandidate[] = [];
+    for (const value of rows) {
+      const row = objectRow(value);
+      const id = stringField(row, "id");
+      const type = stringField(row, "type");
+      const status = stringField(row, "status");
+      const updatedAt = stringField(row, "updated_at");
+      if (type === "proposal" && (status === "promoted" || status === "archived")) {
+        if (Number(row.target_count) !== 1) continue;
+        candidates.push({
+          id,
+          type,
+          status,
+          updated_at: updatedAt,
+          reason: status === "archived"
+            ? "archived promoted proposal retained at least 30 days since archival/update with exactly one durable promotion target"
+            : "promoted proposal retained at least 30 days with exactly one durable promotion target",
+          durable_target_id: stringField(row, "target_id"),
+        });
+      } else if (type === "proposal" && status === "rejected") {
+        candidates.push({ id, type, status, updated_at: updatedAt, reason: "rejected proposal retained at least 90 days" });
+      } else if (type === "handoff" && status === "archived") {
+        candidates.push({ id, type, status, updated_at: updatedAt, reason: "archived handoff retained at least 90 days" });
+      }
+    }
+    return candidates;
+  }
+
+  prune(): PruneResult;
+  prune(options: { apply: true; backupPath: string }): PruneResult;
+  prune(options?: { apply: true; backupPath: string }): PruneResult {
+    if (!options) {
+      return { applied: false, candidates: this.pruneCandidates(), deleted_ids: [], backup_path: null };
+    }
+
+    let result: PruneResult;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const candidates = this.pruneCandidates();
+      const backupPath = this.validateFreshBackup(options.backupPath);
+      const remove = this.db.prepare("DELETE FROM records WHERE id=?");
+      for (const candidate of candidates) remove.run(candidate.id);
+      if (this.db.prepare("PRAGMA foreign_key_check").all().length !== 0) {
+        throw new Error("foreign_key_check failed after prune.");
+      }
+      if (quickCheck(this.db) !== "ok") throw new Error("quick_check failed after prune.");
+      result = {
+        applied: true,
+        candidates,
+        deleted_ids: candidates.map((candidate) => candidate.id),
+        backup_path: backupPath,
+      };
+      this.db.exec("COMMIT");
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch (rollbackError) {
+        throw new Error("Prune failed and the transaction could not be rolled back.", { cause: new AggregateError([error, rollbackError]) });
+      }
+      throw error;
+    }
+    if (quickCheck(this.db) !== "ok") throw new Error("quick_check failed after prune commit; restore from the reported backup.");
+    return result;
+  }
+
   purgeCandidates(staleDays = 14): KbRecord[] {
-    const cutoff = new Date(Date.now() - staleDays * 86400_000).toISOString();
+    assertPositiveDays(staleDays, "stale-days");
+    const cutoff = new Date(Date.now() - staleDays * DAY_MS).toISOString();
     return this.db.prepare(`SELECT * FROM records WHERE status IN ('closed','archived','rejected','promoted','deprecated','superseded') OR (type='handoff' AND updated_at < @cutoff) ORDER BY updated_at ASC LIMIT 100`).all({ cutoff }).map(rowToRecord);
   }
 
   status(): { path: string; counts: Array<{ type: string; status: string; count: number }> } {
-    return { path: this.path(), counts: this.db.prepare("SELECT type,status,COUNT(*) AS count FROM records GROUP BY type,status ORDER BY type,status").all() as any };
+    const counts = this.db.prepare(
+      "SELECT type,status,COUNT(*) AS count FROM records GROUP BY type,status ORDER BY type,status",
+    ).all().map((value) => {
+      const row = objectRow(value);
+      return { type: stringField(row, "type"), status: stringField(row, "status"), count: Number(row.count) };
+    });
+    return { path: this.path(), counts };
   }
 }
 

@@ -48,5 +48,5 @@ CREATE TRIGGER IF NOT EXISTS records_au AFTER UPDATE ON records BEGIN
   INSERT INTO records_fts(id, title, summary, body, project, tags)
   VALUES (new.id, new.title, new.summary, new.body, COALESCE(new.project, ''), new.tags);
 END;
-INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', '${SCHEMA_VERSION}');
+INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '${SCHEMA_VERSION}');
 `;
