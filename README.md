@@ -12,8 +12,13 @@ export AGENT_KB_PATH=/tmp/agent-kb.sqlite # optional
 ./bin/kb promote proposal:demo --type decision --id decision:demo
 ```
 
-Default database path is `~/.local/share/agent-kb/kb.sqlite`; `AGENT_KB_PATH` overrides it. Output is JSON by default.
+Default database path is `~/.local/share/agent-kb/kb.sqlite`; `AGENT_KB_PATH` overrides it.
+
+- `kb search` defaults to **TOON** compact hits (id, type, status, project, confidence, title, summary) for token-efficient LLM/tool output. Pass `--json` for full records.
+- Other commands still print JSON by default.
 
 ## Search
 
 `kb search` uses hybrid lexical retrieval over FTS5: exact id, phrase, AND, title/tags, and OR candidate lists are fused with Reciprocal Rank Fusion, then lightly reranked by status, type, confidence, and type-aware freshness (no embeddings, no LLM). Empty queries list by `updated_at` under the same filters. Promoted/deprecated/superseded records are demoted unless an explicit status filter requests them.
+
+Search hit rendering uses a minimal TOON tabular encoding (schema once, then rows). Full body/evidence still come from `kb get` / `kb_get`.

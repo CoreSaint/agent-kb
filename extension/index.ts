@@ -1,13 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { formatHitsToon } from "/var/home/marcin/Repo/agent-kb/src/format.ts";
 import { createStore } from "/var/home/marcin/Repo/agent-kb/src/store.ts";
+import type { KbRecord } from "/var/home/marcin/Repo/agent-kb/src/types.ts";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; details?: unknown; isError?: boolean };
 
-function ok(title: string, details: unknown): ToolResult {
+function ok(title: string, details: unknown, textBody?: string): ToolResult {
+  const body = textBody ?? JSON.stringify(details, null, 2);
   return { content: [{ type: "text", text: `${title}
 
-${JSON.stringify(details, null, 2)}` }], details };
+${body}` }], details };
 }
 function fail(message: string, details?: unknown): ToolResult {
   return { content: [{ type: "text", text: message }], details, isError: true };
@@ -62,16 +65,19 @@ export default function agentKbExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "kb_search",
     label: "KB Search",
-    description: "Search local typed agent-KB records. Use for promoted handoffs, troubleshoot records, procedures, decisions, landscape, preferences, and proposals.",
+    description: "Search local typed agent-KB records. Returns compact TOON hit rows (id/type/status/project/confidence/title/summary). Use kb_get for full body/evidence.",
     promptSnippet: "Search agent-KB records by query and filters",
     promptGuidelines: [
       "Prefer kb_search/kb_get before hindsight_recall for durable operational knowledge (Phase 3: Hindsight is legacy/emergency only).",
       "Always cite agent-KB record ids when using recalled facts.",
+      "kb_search returns TOON tabular hits without body; call kb_get for full records.",
     ],
     parameters: SearchParams,
     async execute(_id, params) {
-      try { return ok("## agent-KB search", withStore((s) => s.search(params.query ?? "", params))); }
-      catch (err) { return fail(`agent-KB search failed: ${err instanceof Error ? err.message : String(err)}`); }
+      try {
+        const hits = withStore((s) => s.search(params.query ?? "", params)) as KbRecord[];
+        return ok("## agent-KB search", hits, formatHitsToon(hits));
+      } catch (err) { return fail(`agent-KB search failed: ${err instanceof Error ? err.message : String(err)}`); }
     },
   });
   pi.registerTool({

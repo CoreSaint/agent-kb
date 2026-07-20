@@ -8,7 +8,8 @@
   "scripts": {
     "kb": "node ./src/cli.ts",
     "smoke": "node ./src/cli.ts init",
-    "smoke:search": "node ./scripts/smoke-hybrid-search.mjs"
+    "smoke:search": "node ./scripts/smoke-hybrid-search.mjs",
+    "smoke:toon": "node ./scripts/smoke-toon-format.mjs"
   },
   "engines": {
     "node": ">=26"
