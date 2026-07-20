@@ -1,0 +1,16 @@
+{
+  "name": "agent-kb",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "kb": "./bin/kb"
+  },
+  "scripts": {
+    "kb": "node ./src/cli.ts",
+    "smoke": "node ./src/cli.ts init",
+    "smoke:search": "node ./scripts/smoke-hybrid-search.mjs"
+  },
+  "engines": {
+    "node": ">=26"
+  }
+}
