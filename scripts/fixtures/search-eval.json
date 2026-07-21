@@ -1,0 +1,248 @@
+{
+  "records": [
+    {
+      "id": "decision:memory-authority-boundary",
+      "type": "decision",
+      "title": "Memory authority and continuity boundary",
+      "status": "active",
+      "project": "agent-kb",
+      "tags": ["authority", "continuity", "promotion"],
+      "summary": "Authoritative sources remain outside the KB; durable continuity requires explicit promotion.",
+      "body": "Use the vault for policy, repositories for code, and external systems for their own state. Agent KB provides curated continuity through an explicit proposal promotion gate.",
+      "confidence": "high",
+      "last_verified_at": "2026-07-21",
+      "source": "user"
+    },
+    {
+      "id": "procedure:atlas-safe-deploy",
+      "type": "procedure",
+      "title": "Atlas safe deployment and rollback",
+      "status": "active",
+      "project": "atlas",
+      "tags": ["deployment", "rollback", "verification"],
+      "summary": "Deploy safely by checking readiness, preserving rollback state, and verifying service health.",
+      "body": "Before rollout, save the prior artifact. After deployment, verify readiness and health. Roll back immediately if verification fails.",
+      "confidence": "high",
+      "last_verified_at": "2026-07-21",
+      "source": "user"
+    },
+    {
+      "id": "troubleshoot:e-cfg-417-cache-mode",
+      "type": "troubleshoot",
+      "title": "E_CFG_417 invalid cache.mode",
+      "status": "done",
+      "project": "atlas",
+      "tags": ["E_CFG_417", "cache.mode", "configuration"],
+      "summary": "E_CFG_417 occurs when cache.mode uses an unsupported value.",
+      "body": "Set cache.mode to strict, restart the worker, and confirm the configuration identifier no longer appears.",
+      "confidence": "high",
+      "last_verified_at": "2026-07-21",
+      "source": "user"
+    },
+    {
+      "id": "proposal:quartz-cache-policy",
+      "type": "proposal",
+      "title": "Quartz cache retention policy",
+      "status": "promoted",
+      "project": "quartz",
+      "tags": ["cache", "retention", "quartz"],
+      "summary": "Keep Quartz cache entries for twelve hours and invalidate them after schema changes.",
+      "body": "Quartz cache retention is twelve hours. Schema changes require immediate invalidation.",
+      "confidence": "high",
+      "source": "agent"
+    },
+    {
+      "id": "decision:quartz-cache-policy",
+      "type": "decision",
+      "title": "Quartz cache retention policy",
+      "status": "active",
+      "project": "quartz",
+      "tags": ["cache", "retention", "quartz"],
+      "summary": "Keep Quartz cache entries for twelve hours and invalidate them after schema changes.",
+      "body": "Quartz cache retention is twelve hours. Schema changes require immediate invalidation.",
+      "confidence": "high",
+      "supersedes": "proposal:quartz-cache-policy",
+      "last_verified_at": "2026-07-21",
+      "source": "agent_promoted"
+    },
+    {
+      "id": "decision:rotation-amber-legacy",
+      "type": "decision",
+      "title": "Legacy service rotation protocol",
+      "status": "superseded",
+      "project": "helios",
+      "tags": ["rotation", "legacy", "amber"],
+      "summary": "The old rotation protocol used the amber sequence.",
+      "body": "Legacy operators used the amber rotation sequence.",
+      "confidence": "medium",
+      "supersedes": "decision:rotation-cobalt-current",
+      "source": "user"
+    },
+    {
+      "id": "decision:rotation-cobalt-current",
+      "type": "decision",
+      "title": "Current service rotation protocol",
+      "status": "active",
+      "project": "helios",
+      "tags": ["rotation", "current", "cobalt"],
+      "summary": "The current rotation protocol uses the cobalt sequence.",
+      "body": "Active operators use the cobalt rotation sequence and verify the replacement before cutover.",
+      "confidence": "high",
+      "last_verified_at": "2026-07-21",
+      "source": "user"
+    },
+    {
+      "id": "handoff:orion-index-rebuild",
+      "type": "handoff",
+      "title": "Orion index rebuild continuation",
+      "status": "open",
+      "project": "orion",
+      "tags": ["index", "rebuild", "continuation"],
+      "summary": "Continue the Orion index rebuild after validating shard seven.",
+      "body": "Next action: validate shard seven, then resume the index rebuild from checkpoint delta.",
+      "confidence": "medium",
+      "source": "agent"
+    },
+    {
+      "id": "procedure:deprecated-atlas-deploy",
+      "type": "procedure",
+      "title": "Deprecated Atlas direct deployment",
+      "status": "deprecated",
+      "project": "atlas",
+      "tags": ["deployment", "legacy"],
+      "summary": "Old Atlas deployment skipped readiness verification.",
+      "body": "This stale process deployed directly without a rollback check.",
+      "confidence": "low",
+      "supersedes": "procedure:atlas-safe-deploy",
+      "source": "import"
+    },
+    {
+      "id": "landscape:other-deployment-noise",
+      "type": "landscape",
+      "title": "Unrelated deployment inventory",
+      "status": "active",
+      "project": "other-project",
+      "tags": ["deployment", "inventory"],
+      "summary": "Synthetic inventory for an unrelated project.",
+      "body": "Lists unrelated deployment environments without Atlas rollback guidance.",
+      "confidence": "medium",
+      "last_verified_at": "2026-07-21",
+      "source": "user"
+    },
+    {
+      "id": "proposal:irrelevant-traffic-note",
+      "type": "proposal",
+      "title": "Unrelated traffic sampling note",
+      "status": "rejected",
+      "project": "traffic",
+      "tags": ["sampling"],
+      "summary": "Synthetic irrelevant record used to detect retrieval intrusion.",
+      "body": "Sample road traffic at a fixed interval.",
+      "confidence": "low",
+      "source": "agent"
+    }
+  ],
+  "cases": [
+    {
+      "id": "exact-id",
+      "query": "decision:memory-authority-boundary",
+      "expectedIds": ["decision:memory-authority-boundary"],
+      "forbiddenIds": [],
+      "filters": {},
+      "rank": [{"id": "decision:memory-authority-boundary", "equals": 1}],
+      "withinTopN": [{"id": "decision:memory-authority-boundary", "n": 1}],
+      "limit": 5
+    },
+    {
+      "id": "paraphrased-decision",
+      "query": "trusted continuity promotion authority",
+      "expectedIds": ["decision:memory-authority-boundary"],
+      "forbiddenIds": ["proposal:irrelevant-traffic-note"],
+      "filters": {},
+      "rank": [],
+      "withinTopN": [{"id": "decision:memory-authority-boundary", "n": 3}],
+      "limit": 5
+    },
+    {
+      "id": "paraphrased-procedure",
+      "query": "rollback verify deployment safely",
+      "expectedIds": ["procedure:atlas-safe-deploy"],
+      "forbiddenIds": ["procedure:deprecated-atlas-deploy", "landscape:other-deployment-noise"],
+      "filters": {"project": "atlas", "status": "active"},
+      "rank": [{"id": "procedure:atlas-safe-deploy", "equals": 1}],
+      "withinTopN": [{"id": "procedure:atlas-safe-deploy", "n": 3}],
+      "limit": 5
+    },
+    {
+      "id": "error-config-identifier",
+      "query": "E_CFG_417 cache.mode",
+      "expectedIds": ["troubleshoot:e-cfg-417-cache-mode"],
+      "forbiddenIds": ["proposal:irrelevant-traffic-note"],
+      "filters": {},
+      "rank": [{"id": "troubleshoot:e-cfg-417-cache-mode", "equals": 1}],
+      "withinTopN": [{"id": "troubleshoot:e-cfg-417-cache-mode", "n": 1}],
+      "limit": 5
+    },
+    {
+      "id": "project-filter",
+      "query": "deployment rollback",
+      "expectedIds": ["procedure:atlas-safe-deploy"],
+      "forbiddenIds": ["landscape:other-deployment-noise"],
+      "filters": {"project": "atlas"},
+      "rank": [],
+      "withinTopN": [{"id": "procedure:atlas-safe-deploy", "n": 3}],
+      "limit": 5
+    },
+    {
+      "id": "type-status-filter",
+      "query": "rotation protocol",
+      "expectedIds": ["decision:rotation-cobalt-current"],
+      "forbiddenIds": ["decision:rotation-amber-legacy"],
+      "filters": {"type": "decision", "status": "active", "project": "helios"},
+      "rank": [{"id": "decision:rotation-cobalt-current", "equals": 1}],
+      "withinTopN": [{"id": "decision:rotation-cobalt-current", "n": 1}],
+      "limit": 5
+    },
+    {
+      "id": "promoted-proposal-twin",
+      "query": "Quartz cache retention policy",
+      "expectedIds": ["decision:quartz-cache-policy"],
+      "forbiddenIds": ["proposal:quartz-cache-policy"],
+      "filters": {},
+      "rank": [{"id": "decision:quartz-cache-policy", "equals": 1}],
+      "withinTopN": [{"id": "decision:quartz-cache-policy", "n": 1}],
+      "limit": 1
+    },
+    {
+      "id": "superseded-chain",
+      "query": "current cobalt rotation protocol",
+      "expectedIds": ["decision:rotation-cobalt-current"],
+      "forbiddenIds": ["decision:rotation-amber-legacy"],
+      "filters": {},
+      "rank": [{"id": "decision:rotation-cobalt-current", "equals": 1}],
+      "withinTopN": [{"id": "decision:rotation-cobalt-current", "n": 1}],
+      "limit": 1
+    },
+    {
+      "id": "open-handoff",
+      "query": "Orion shard seven checkpoint delta",
+      "expectedIds": ["handoff:orion-index-rebuild"],
+      "forbiddenIds": ["proposal:irrelevant-traffic-note"],
+      "filters": {"type": "handoff", "status": "open"},
+      "rank": [{"id": "handoff:orion-index-rebuild", "equals": 1}],
+      "withinTopN": [{"id": "handoff:orion-index-rebuild", "n": 1}],
+      "limit": 5
+    },
+    {
+      "id": "expected-miss",
+      "query": "xylophone nebula checksum 99999",
+      "expectedIds": [],
+      "forbiddenIds": ["proposal:irrelevant-traffic-note", "decision:rotation-amber-legacy", "procedure:deprecated-atlas-deploy"],
+      "filters": {},
+      "rank": [],
+      "withinTopN": [],
+      "expectNoResults": true,
+      "limit": 5
+    }
+  ]
+}
