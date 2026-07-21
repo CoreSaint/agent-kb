@@ -21,6 +21,11 @@ import {
   type PruneResult,
   type RecordSummary,
   type RecordType,
+  type SearchDiagnosticHit,
+  type SearchFilters,
+  type SearchMetadataComponents,
+  type SearchRetrievalContribution,
+  type SearchRetrievalList,
   type Source,
   type UpsertInput,
 } from "./types.ts";
@@ -117,22 +122,38 @@ function ftsTitleTags(tokens: string[]): string {
   return `{title tags}: ${ftsOr(tokens)}`;
 }
 
-type RankedList = { weight: number; ids: string[] };
+type RankedList = { name: SearchRetrievalList; weight: number; ids: string[] };
+
+interface FusedRrf {
+  scores: Map<string, number>;
+  contributions: Map<string, SearchRetrievalContribution[]>;
+}
+
+interface RankedSearchHit {
+  record: KbRecord;
+  diagnostic: SearchDiagnosticHit;
+}
 
 /** Terminal / non-authoritative statuses: still returnable, but demoted unless filtered explicitly. */
 const DEMOTED_STATUSES = new Set([
   "promoted", "deprecated", "superseded", "archived", "rejected", "closed",
 ]);
 
-function fuseRrf(lists: RankedList[]): Map<string, number> {
+function fuseRrf(lists: RankedList[]): FusedRrf {
   const scores = new Map<string, number>();
-  for (const { weight, ids } of lists) {
+  const contributions = new Map<string, SearchRetrievalContribution[]>();
+  for (const { name, weight, ids } of lists) {
     ids.forEach((id, index) => {
       const rank = index + 1;
-      scores.set(id, (scores.get(id) ?? 0) + weight / (RRF_K + rank));
+      const contribution = weight / (RRF_K + rank);
+      scores.set(id, (scores.get(id) ?? 0) + contribution);
+      const item = { list: name, rank, weight, rrf_contribution: contribution };
+      const existing = contributions.get(id);
+      if (existing) existing.push(item);
+      else contributions.set(id, [item]);
     });
   }
-  return scores;
+  return { scores, contributions };
 }
 
 function statusBoost(type: string, status: string): number {
@@ -216,20 +237,90 @@ function freshnessBoost(rec: KbRecord, nowMs: number): number {
   return 0;
 }
 
-function rerankScore(
+/** Maximum metadata adjustment after calibration; total metadata range is [-0.05, +0.05]. */
+const METADATA_MAX_CONTRIBUTION = 0.05;
+/** Maximum attainable positive sum from the four metadata component functions. */
+const METADATA_MAX_POSITIVE_RAW = 0.32;
+/** Largest attainable negative magnitude from compatible type/status component combinations. */
+const METADATA_MAX_NEGATIVE_RAW = 0.36;
+/** Separates exact IDs from every non-exact score, whose maximum is 1.05. */
+const EXACT_ID_BONUS = 2;
+
+function boundedMetadataContribution(rawTotal: number): number {
+  if (rawTotal === 0) return 0;
+  const scale = rawTotal > 0 ? METADATA_MAX_POSITIVE_RAW : METADATA_MAX_NEGATIVE_RAW;
+  const normalized = Math.max(-1, Math.min(1, rawTotal / scale));
+  return normalized * METADATA_MAX_CONTRIBUTION;
+}
+
+function metadataComponents(rec: KbRecord, nowMs: number, apply: boolean): SearchMetadataComponents {
+  const status = statusBoost(rec.type, rec.status);
+  const type = typeBoost(rec.type);
+  const confidence = confidenceBoost(rec.confidence);
+  const freshness = freshnessBoost(rec, nowMs);
+  const rawTotal = status + type + confidence + freshness;
+  return {
+    status,
+    type,
+    confidence,
+    freshness,
+    raw_total: rawTotal,
+    bounded_contribution: apply ? boundedMetadataContribution(rawTotal) : 0,
+  };
+}
+
+function diagnosticHit(
   rec: KbRecord,
-  rrf: number,
-  opts: { query: string; nowMs: number },
-): number {
-  // Exact id paste must always win over near-ties.
-  if (rec.id === opts.query) return rrf + 10;
-  return (
-    rrf +
-    statusBoost(rec.type, rec.status) +
-    typeBoost(rec.type) +
-    confidenceBoost(rec.confidence) +
-    freshnessBoost(rec, opts.nowMs)
-  );
+  values: {
+    rankingMode: "lexical" | "recency";
+    exactIdMatch: boolean;
+    rawRrfScore: number;
+    normalizedLexicalScore: number;
+    metadata: SearchMetadataComponents;
+    retrievalLists: SearchRetrievalContribution[];
+  },
+): SearchDiagnosticHit {
+  const exactIdBonus = values.exactIdMatch ? EXACT_ID_BONUS : 0;
+  return {
+    id: rec.id,
+    type: rec.type,
+    status: rec.status,
+    project: rec.project,
+    confidence: rec.confidence,
+    title: rec.title,
+    summary: rec.summary,
+    ranking_mode: values.rankingMode,
+    exact_id_match: values.exactIdMatch,
+    raw_rrf_score: values.rawRrfScore,
+    normalized_lexical_score: values.normalizedLexicalScore,
+    metadata: values.metadata,
+    exact_id_bonus: exactIdBonus,
+    final_score: values.normalizedLexicalScore + values.metadata.bounded_contribution + exactIdBonus,
+    retrieval_lists: values.retrievalLists,
+  };
+}
+
+/**
+ * Query-relative score:
+ *   final = rawRrf / maxRawRrf + boundedMetadata + exactIdBonus
+ * Non-exact lexical relevance is [0, 1], metadata is [-0.05, 0.05], and exactIdBonus is 2.
+ */
+function scoreLexicalHit(
+  rec: KbRecord,
+  rawRrfScore: number,
+  maxRawRrfScore: number,
+  query: string,
+  nowMs: number,
+  retrievalLists: SearchRetrievalContribution[],
+): SearchDiagnosticHit {
+  return diagnosticHit(rec, {
+    rankingMode: "lexical",
+    exactIdMatch: rec.id === query,
+    rawRrfScore,
+    normalizedLexicalScore: maxRawRrfScore > 0 ? rawRrfScore / maxRawRrfScore : 0,
+    metadata: metadataComponents(rec, nowMs, true),
+    retrievalLists,
+  });
 }
 
 function slug(text: string): string {
@@ -398,12 +489,19 @@ export class KbStore {
   }
 
   /**
-   * Hybrid lexical search: FTS candidate lists → RRF → metadata-aware rerank.
-   * Lists (when applicable): exact id, phrase, AND, title/tags, OR.
-   * Rerank uses status, type, confidence, and type-aware freshness (no LLM).
-   * Empty / non-token queries fall back to recency under the same filters.
+   * Hybrid lexical search: FTS candidate lists → RRF → calibrated metadata rerank.
+   * Existing callers receive full records; diagnostics use the same ranked result internally.
    */
-  search(query = "", filters: { type?: string; status?: string; project?: string; limit?: number } = {}): KbRecord[] {
+  search(query = "", filters: SearchFilters = {}): KbRecord[] {
+    return this.rankSearch(query, filters).map((hit) => hit.record);
+  }
+
+  /** Compact opt-in score diagnostics. Full body, evidence, tags, and lineage are excluded. */
+  searchWithDiagnostics(query = "", filters: SearchFilters = {}): SearchDiagnosticHit[] {
+    return this.rankSearch(query, filters).map((hit) => hit.diagnostic);
+  }
+
+  private rankSearch(query: string, filters: SearchFilters): RankedSearchHit[] {
     const limit = Math.max(1, Math.min(filters.limit ?? 20, 100));
     const filterClauses: string[] = [];
     const filterParams: Record<string, unknown> = {};
@@ -418,11 +516,22 @@ export class KbStore {
       return true;
     };
 
-    const listByRecency = (): KbRecord[] => {
+    const listByRecency = (): RankedSearchHit[] => {
       const where = filterClauses.length ? `WHERE ${filterClauses.join(" AND ")}` : "";
+      const nowMs = Date.now();
       return this.db.prepare(
         `SELECT r.* FROM records r ${where} ORDER BY r.updated_at DESC LIMIT @limit`,
-      ).all({ ...filterParams, limit }).map(rowToRecord);
+      ).all({ ...filterParams, limit }).map(rowToRecord).map((record) => ({
+        record,
+        diagnostic: diagnosticHit(record, {
+          rankingMode: "recency",
+          exactIdMatch: false,
+          rawRrfScore: 0,
+          normalizedLexicalScore: 0,
+          metadata: metadataComponents(record, nowMs, false),
+          retrievalLists: [],
+        }),
+      }));
     };
 
     const trimmed = query.trim();
@@ -448,44 +557,58 @@ export class KbStore {
     // Exact id hit (highest weight): full trimmed string matches a record id.
     const exact = this.get(trimmed);
     if (exact && passesFilters(exact)) {
-      lists.push({ weight: 3.0, ids: [exact.id] });
+      lists.push({ name: "exact_id", weight: 3.0, ids: [exact.id] });
     }
 
     // Phrase match for multi-token queries (exact token sequence).
     if (tokens.length >= 2) {
       const phraseIds = runFts(ftsPhrase(tokens));
-      if (phraseIds.length) lists.push({ weight: 2.0, ids: phraseIds });
+      if (phraseIds.length) lists.push({ name: "phrase", weight: 2.0, ids: phraseIds });
     }
 
     // All terms must appear (stricter than OR).
     if (tokens.length >= 2) {
       const andIds = runFts(ftsAnd(tokens));
-      if (andIds.length) lists.push({ weight: 1.5, ids: andIds });
+      if (andIds.length) lists.push({ name: "and", weight: 1.5, ids: andIds });
     }
 
     // Title / tags bias: good for short labels and identifiers.
     const titleTagIds = runFts(ftsTitleTags(tokens));
-    if (titleTagIds.length) lists.push({ weight: 1.5, ids: titleTagIds });
+    if (titleTagIds.length) lists.push({ name: "title_tags", weight: 1.5, ids: titleTagIds });
 
     // Broad OR lexical net (always when tokens exist).
     const orIds = runFts(ftsOr(tokens));
-    if (orIds.length) lists.push({ weight: 1.0, ids: orIds });
+    if (orIds.length) lists.push({ name: "or", weight: 1.0, ids: orIds });
 
     if (lists.length === 0) return [];
 
-    const rrfScores = fuseRrf(lists);
+    const fused = fuseRrf(lists);
+    let maxRawRrfScore = 0;
+    for (const score of fused.scores.values()) {
+      if (score > maxRawRrfScore) maxRawRrfScore = score;
+    }
+
     const nowMs = Date.now();
-    const ranked: Array<{ rec: KbRecord; score: number }> = [];
-    for (const [id, rrf] of rrfScores) {
-      const rec = this.get(id);
-      if (!rec || !passesFilters(rec)) continue;
+    const ranked: RankedSearchHit[] = [];
+    for (const [id, rawRrfScore] of fused.scores) {
+      const record = this.get(id);
+      if (!record || !passesFilters(record)) continue;
       ranked.push({
-        rec,
-        score: rerankScore(rec, rrf, { query: trimmed, nowMs }),
+        record,
+        diagnostic: scoreLexicalHit(
+          record,
+          rawRrfScore,
+          maxRawRrfScore,
+          trimmed,
+          nowMs,
+          fused.contributions.get(id) ?? [],
+        ),
       });
     }
-    ranked.sort((a, b) => b.score - a.score || a.rec.id.localeCompare(b.rec.id));
-    return ranked.slice(0, limit).map((x) => x.rec);
+    ranked.sort((a, b) =>
+      b.diagnostic.final_score - a.diagnostic.final_score
+      || a.record.id.localeCompare(b.record.id));
+    return ranked.slice(0, limit);
   }
 
   maintain(staleDays = 14): MaintenanceReport {

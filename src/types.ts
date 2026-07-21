@@ -94,6 +94,49 @@ export interface KbRecord {
   source: Source;
 }
 
+export interface SearchFilters {
+  type?: string;
+  status?: string;
+  project?: string;
+  limit?: number;
+}
+
+export type SearchRetrievalList = "exact_id" | "phrase" | "and" | "title_tags" | "or";
+
+export interface SearchRetrievalContribution {
+  list: SearchRetrievalList;
+  rank: number;
+  weight: number;
+  rrf_contribution: number;
+}
+
+export interface SearchMetadataComponents {
+  status: number;
+  type: number;
+  confidence: number;
+  freshness: number;
+  raw_total: number;
+  bounded_contribution: number;
+}
+
+export interface SearchDiagnosticHit {
+  id: string;
+  type: RecordType;
+  status: string;
+  project: string | null;
+  confidence: Confidence;
+  title: string;
+  summary: string;
+  ranking_mode: "lexical" | "recency";
+  exact_id_match: boolean;
+  raw_rrf_score: number;
+  normalized_lexical_score: number;
+  metadata: SearchMetadataComponents;
+  exact_id_bonus: number;
+  final_score: number;
+  retrieval_lists: SearchRetrievalContribution[];
+}
+
 export interface UpsertInput {
   id: string;
   type: RecordType;

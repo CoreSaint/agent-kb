@@ -12,7 +12,7 @@ Records have a type-specific lifecycle:
 - `handoff` records carry bounded work-in-progress continuity and move from `open` or `blocked` to `closed`, then may be archived.
 - Durable records remain active until explicitly superseded, deprecated, or archived. Maintenance reports lifecycle candidates but does not silently promote or rewrite knowledge.
 
-Schema v1 uses `supersedes` for both a durable record's proposal source and an old durable record's replacement. That overloaded lineage is a known limitation deferred to A3. Search metadata reranking is not calibrated against the lexical score range; correcting and diagnosing that behavior is deferred to A2.
+Schema v1 uses `supersedes` for both a durable record's proposal source and an old durable record's replacement. That overloaded lineage is a known limitation deferred to A3.
 
 Session JSONL is an execution transcript, not a durable knowledge source and not an ingestion feed. Pi observational memory may summarize context for continuity within a session and across compaction, but it does not promote records, replace handoffs, or become authoritative agent-KB content.
 
@@ -40,9 +40,20 @@ Default database path is `~/.local/share/agent-kb/kb.sqlite`; `AGENT_KB_PATH` ov
 
 ## Search
 
-`kb search` uses hybrid lexical retrieval over FTS5: exact id, phrase, AND, title/tags, and OR candidate lists are fused with Reciprocal Rank Fusion, then lightly reranked by status, type, confidence, and type-aware freshness (no embeddings, no LLM). Empty queries list by `updated_at` under the same filters. Promoted/deprecated/superseded records are demoted unless an explicit status filter requests them.
+`kb search` uses hybrid lexical retrieval over FTS5 (no embeddings or LLM). It builds exact-ID, phrase, AND, title/tags, and OR lists, then applies Reciprocal Rank Fusion (RRF) with $K=60$ and list weights $3$, $2$, $1.5$, $1.5$, and $1$. For candidate $d$, raw lexical relevance is:
 
-Search hit rendering uses a minimal TOON tabular encoding (schema once, then rows). Full body/evidence still come from `kb get` / `kb_get`.
+$$R(d)=\sum_l \frac{w_l}{60+\operatorname{rank}_l(d)}$$
+
+Ranking normalizes lexical relevance against the strongest candidate for the current filtered query, $L(d)=R(d)/\max_j R(j)$, so $L\in[0,1]$. Status, type, confidence, and type-aware freshness retain their explicit component scores. Their raw sum $m$ is mapped to a bounded contribution:
+
+$$M(d)=0.05\times\begin{cases}
+\operatorname{clamp}(m/0.32,-1,1),&m\geq0\\
+\operatorname{clamp}(m/0.36,-1,1),&m<0
+\end{cases}$$
+
+The final score is $S(d)=L(d)+M(d)+2I_{\mathrm{exact}}(d)$. A non-exact score is in $[-0.05,1.05]`; metadata can resolve a lexical near-tie but cannot reverse a normalized lexical gap greater than $0.1$. The exact-ID bonus separates a permitted exact hit from every non-exact hit. Final ties use ascending record ID. Empty/non-token queries retain `updated_at` recency ordering under the same filters and do not apply score reranking.
+
+Default search rendering remains minimal TOON (id, type, status, project, confidence, title, summary); `--json` retains the existing full-record JSON contract. `kb search <query> --explain` and core `KbStore.searchWithDiagnostics()` return compact JSON diagnostics with the same identity fields plus ranking mode, exact-ID flag, raw RRF, normalized lexical score, four metadata components and their raw/bounded totals, exact-ID bonus, final score, and every contributing retrieval-list name, weight, rank, and RRF contribution. Explain output intentionally excludes tags, body, evidence, lineage, source, and timestamps. The Pi `kb_search` tool exposes the same bounded contract only when `explain: true`; its default TOON output is unchanged.
 
 ## Retrieval evaluation
 
@@ -96,4 +107,5 @@ AGENT_KB_PATH=/tmp/agent-kb-search.sqlite npm run smoke:search
 AGENT_KB_PATH=/tmp/agent-kb-toon.sqlite npm run smoke:toon
 npm run smoke:maintenance
 npm run smoke:eval
+npm run smoke:diagnostics
 ```

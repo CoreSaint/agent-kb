@@ -25,6 +25,7 @@ const SearchParams = Type.Object({
   status: Type.Optional(Type.String()),
   project: Type.Optional(Type.String()),
   limit: Type.Optional(Type.Number()),
+  explain: Type.Optional(Type.Boolean({ default: false })),
 });
 const GetParams = Type.Object({ id: Type.String() });
 const RecordTypeParam = Type.Union([
@@ -80,17 +81,23 @@ export default function agentKbExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "kb_search",
     label: "KB Search",
-    description: "Search local typed agent-KB records. Returns compact TOON hit rows (id/type/status/project/confidence/title/summary). Use kb_get for full body/evidence.",
+    description: "Search local typed agent-KB records. Returns compact TOON hit rows by default; explain=true returns bounded JSON ranking diagnostics without body/evidence.",
     promptSnippet: "Search agent-KB records by query and filters",
     promptGuidelines: [
       "Prefer kb_search/kb_get before hindsight_recall for durable operational knowledge (Phase 3: Hindsight is legacy/emergency only).",
       "Always cite agent-KB record ids when using recalled facts.",
       "kb_search returns TOON tabular hits without body; call kb_get for full records.",
+      "Set explain=true only when auditing ranking; default search stays compact.",
     ],
     parameters: SearchParams,
     async execute(_id, params) {
       try {
-        const hits = withStore((s) => s.search(params.query ?? "", params));
+        const { explain = false, query = "", ...filters } = params;
+        if (explain) {
+          const diagnostics = withStore((s) => s.searchWithDiagnostics(query, filters));
+          return ok("## agent-KB search diagnostics", diagnostics);
+        }
+        const hits = withStore((s) => s.search(query, filters));
         return ok("## agent-KB search", hits, formatHitsToon(hits));
       } catch (err) { return fail(`agent-KB search failed: ${err instanceof Error ? err.message : String(err)}`); }
     },

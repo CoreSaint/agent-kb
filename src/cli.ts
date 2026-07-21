@@ -51,6 +51,7 @@ function assertFlags(flags: Flags, allowed: readonly string[]): void {
   }
   if (flags.human !== undefined && flags.human !== true) throw new Error("--human does not accept a value.");
   if (flags.json !== undefined && flags.json !== true) throw new Error("--json does not accept a value.");
+  if (flags.explain !== undefined && flags.explain !== true) throw new Error("--explain does not accept a value.");
 }
 
 function optionalFlag(flags: Flags, name: string): string | undefined {
@@ -147,7 +148,7 @@ function outSearch(records: KbRecord[], flags: Flags): void {
 function usage(): string {
   return `kb init
 kb path
-kb search <query> [--type t] [--status s] [--project p] [--limit n] [--json]
+kb search <query> [--type t] [--status s] [--project p] [--limit n] [--json | --explain]
 kb get <id>
 kb upsert --id --type --title [--status] [--project] [--tags a,b] [--summary] [--body-file f] [--body] [--confidence] [--evidence e1,e2] [--source] [--durable]
 kb promote <proposalId> --type decision|procedure|troubleshoot|landscape|preference [--id newId] [--title] [--status active|done] ...
@@ -179,14 +180,19 @@ try {
     case "path":
       assertFlags(flags, []); noArguments(args, cmd); console.log(store.path()); break;
     case "search": {
-      assertFlags(flags, ["type", "status", "project", "limit", "json", "human"]);
+      assertFlags(flags, ["type", "status", "project", "limit", "json", "human", "explain"]);
+      if (flags.explain && (flags.json || flags.human)) {
+        throw new Error("--explain cannot be combined with --json or --human.");
+      }
       const limitValue = optionalFlag(flags, "limit");
-      outSearch(store.search(args.join(" "), {
+      const searchFilters = {
         type: optionalFlag(flags, "type"),
         status: optionalFlag(flags, "status"),
         project: optionalFlag(flags, "project"),
         limit: limitValue === undefined ? 20 : strictInteger(limitValue, "limit", 100),
-      }), flags);
+      };
+      if (flags.explain) out(store.searchWithDiagnostics(args.join(" "), searchFilters), flags);
+      else outSearch(store.search(args.join(" "), searchFilters), flags);
       break;
     }
     case "get":
