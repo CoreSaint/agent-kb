@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { formatHitsToon } from "./format.ts";
+import { kbPath } from "./db.ts";
+import { migrateV1ToV2 } from "./migration.ts";
 import { createStore, type KbStore } from "./store.ts";
 import {
   confidences,
@@ -147,6 +149,7 @@ function outSearch(records: KbRecord[], flags: Flags): void {
 
 function usage(): string {
   return `kb init
+kb migrate [--apply]
 kb path
 kb search <query> [--type t] [--status s] [--project p] [--limit n] [--json | --explain]
 kb get <id>
@@ -163,6 +166,7 @@ kb backup [--output path]
 kb prune [--apply --backup fresh-maintenance-backup]
 
 Maintenance safety:
+  migrate previews schema-v1 lineage classification without writes; --apply performs one transactional migration.
   maintain and prune default to read-only output without record bodies.
   backup refuses overwrite, uses mode 0600, and verifies quick_check.
   prune --apply requires a matching kb backup no older than 15 minutes.
@@ -173,8 +177,14 @@ Maintenance safety:
 let store: KbStore | undefined;
 try {
   const { cmd, args, flags } = parse(process.argv.slice(2));
-  store = createStore();
-  switch (cmd) {
+  if (cmd === "migrate") {
+    assertFlags(flags, ["apply", "human"]);
+    noArguments(args, cmd);
+    if (flags.apply !== undefined && flags.apply !== true) throw new Error("--apply does not accept a value.");
+    out(migrateV1ToV2(kbPath(), flags.apply === true), flags);
+  } else {
+    store = createStore();
+    switch (cmd) {
     case "init":
       assertFlags(flags, ["human"]); noArguments(args, cmd); out(store.init(), flags); break;
     case "path":
@@ -283,6 +293,7 @@ try {
     default:
       console.error(usage()); process.exitCode = 2;
   }
+    }
 } catch (error) {
   console.error(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }, null, 2));
   process.exitCode = 1;

@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const DDL = `
 PRAGMA journal_mode = WAL;
@@ -18,11 +18,18 @@ CREATE TABLE IF NOT EXISTS records (
   summary TEXT NOT NULL DEFAULT '',
   confidence TEXT NOT NULL DEFAULT 'medium',
   evidence TEXT NOT NULL DEFAULT '[]',
-  supersedes TEXT,
+  promoted_from TEXT,
+  superseded_by TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   last_verified_at TEXT,
   source TEXT NOT NULL DEFAULT 'user'
+);
+CREATE TABLE IF NOT EXISTS lineage_migration_ambiguities (
+  record_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  PRIMARY KEY (record_id, target_id)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
   id UNINDEXED,

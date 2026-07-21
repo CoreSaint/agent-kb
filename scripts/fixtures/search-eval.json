@@ -61,7 +61,7 @@
       "summary": "Keep Quartz cache entries for twelve hours and invalidate them after schema changes.",
       "body": "Quartz cache retention is twelve hours. Schema changes require immediate invalidation.",
       "confidence": "high",
-      "supersedes": "proposal:quartz-cache-policy",
+      "promoted_from": "proposal:quartz-cache-policy",
       "last_verified_at": "2026-07-21",
       "source": "agent_promoted"
     },
@@ -75,7 +75,7 @@
       "summary": "The old rotation protocol used the amber sequence.",
       "body": "Legacy operators used the amber rotation sequence.",
       "confidence": "medium",
-      "supersedes": "decision:rotation-cobalt-current",
+      "superseded_by": "decision:rotation-cobalt-current",
       "source": "user"
     },
     {
@@ -113,7 +113,7 @@
       "summary": "Old Atlas deployment skipped readiness verification.",
       "body": "This stale process deployed directly without a rollback check.",
       "confidence": "low",
-      "supersedes": "procedure:atlas-safe-deploy",
+      "superseded_by": "procedure:atlas-safe-deploy",
       "source": "import"
     },
     {

@@ -1,4 +1,4 @@
-# Implement agent-KB v1
+# Implement agent-KB v2
 
 ## Goal
 
@@ -21,8 +21,9 @@ Create a local typed SQLite knowledge base with CLI and a Pi coding-agent extens
   package.json
   README.md
   src/
-    schema.ts       # DDL + migrations
-    db.ts           # open DB, ensure schema
+    schema.ts       # schema-v2 DDL
+    db.ts           # open DB, bootstrap v2, refuse implicit v1 migration
+    migration.ts    # explicit v1 preview/apply migration
     types.ts        # record types, statuses
     secrets.ts      # reject heuristics
     store.ts        # CRUD/search/promote/close/supersede
@@ -54,13 +55,16 @@ Table `records`:
 - summary TEXT NOT NULL DEFAULT ''
 - confidence TEXT NOT NULL DEFAULT 'medium'  -- high|medium|low
 - evidence TEXT NOT NULL DEFAULT '[]'  -- JSON array of strings
-- supersedes TEXT  -- id
+- promoted_from TEXT  -- nullable proposal or explicitly promoted handoff id
+- superseded_by TEXT  -- nullable replacement record id
 - created_at TEXT NOT NULL
 - updated_at TEXT NOT NULL
 - last_verified_at TEXT  -- nullable
 - source TEXT NOT NULL DEFAULT 'user'  -- user|agent_promoted|import|agent
 
 FTS5 virtual table `records_fts` on title, summary, body, project, tags (content sync via triggers).
+
+Table `lineage_migration_ambiguities` durably retains unclassified schema-v1 lineage as `(record_id, target_id, reason)`.
 
 Indexes: type, status, project, updated_at.
 
@@ -78,6 +82,8 @@ Indexes: type, status, project, updated_at.
 
 Defaults: handoff→open, proposal→open, others→draft on create unless specified; promote sets durable type status to `active` (troubleshoot may be `done` if requested).
 
+Schema version is 2. New databases bootstrap directly at v2. Existing schema-v1 databases are refused during normal open and require explicit `kb migrate` preview followed by `kb migrate --apply`. Preview is read-only. Apply is transactional, classifies only durable → existing proposal/handoff as promotion provenance and record → existing durable as replacement lineage, preserves every other legacy pair in the ambiguity table, updates the schema version last, verifies integrity, and refuses reapplication.
+
 ## Write policy in store
 
 - `upsert`: 
@@ -86,14 +92,15 @@ Defaults: handoff→open, proposal→open, others→draft on create unless speci
   - **Recommended v1:** `upsert` allows handoff + proposal always; durable types only if id already exists with that durable type (update) OR flag `forceDurable` for user CLI; agent tools use promote for new durable
 - `promote(id, { type, title?, body?, summary?, project?, tags?, confidence? })`:
   - source record should be proposal (or allow promote-from-handoff findings only if explicit)
-  - creates/updates durable record; mark proposal status `promoted`; set source `agent_promoted` or keep user; set last_verified_at now optional
+  - creates/updates durable record; mark proposal status `promoted`; set/preserve only `promoted_from`; set source `agent_promoted` or keep user; set last_verified_at optional
 - `close(id, status?)` for handoffs
-- `supersede(oldId, newId)` set old status superseded and link
+- `supersede(oldId, newId)` rejects self-reference, sets the old record's lifecycle status and `superseded_by`, and preserves `promoted_from`
 
 ## CLI (`kb`)
 
 ```text
 kb init
+kb migrate [--apply]
 kb search <query> [--type t] [--status s] [--project p] [--limit n]
 kb get <id>
 kb upsert --id --type --title [--status] [--project] [--tags a,b] [--summary] [--body-file f] [--body] [--confidence] [--evidence e1,e2] [--source]

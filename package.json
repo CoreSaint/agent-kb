@@ -12,7 +12,8 @@
     "smoke:toon": "node ./scripts/smoke-toon-format.mjs",
     "smoke:maintenance": "node ./scripts/smoke-maintenance.mjs",
     "smoke:eval": "node ./scripts/eval-search.mjs",
-    "smoke:diagnostics": "node ./scripts/smoke-search-diagnostics.mjs"
+    "smoke:diagnostics": "node ./scripts/smoke-search-diagnostics.mjs",
+    "smoke:migration": "node ./scripts/smoke-schema-v2-migration.mjs"
   },
   "engines": {
     "node": ">=26"

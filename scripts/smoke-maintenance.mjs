@@ -68,15 +68,15 @@ try {
   put({ id: "proposal:archive-unlinked", type: "proposal", status: "promoted" });
   put({ id: "proposal:archive-double", type: "proposal", status: "promoted" });
 
-  put({ id: "decision:linked-target", type: "decision", status: "active", supersedes: "proposal:linked", body: "active durable activetoken" }, true);
-  put({ id: "procedure:double-one", type: "procedure", status: "active", supersedes: "proposal:double-linked" }, true);
-  put({ id: "procedure:double-two", type: "procedure", status: "active", supersedes: "proposal:double-linked" }, true);
+  put({ id: "decision:linked-target", type: "decision", status: "active", promoted_from: "proposal:linked", body: "active durable activetoken" }, true);
+  put({ id: "procedure:double-one", type: "procedure", status: "active", promoted_from: "proposal:double-linked" }, true);
+  put({ id: "procedure:double-two", type: "procedure", status: "active", promoted_from: "proposal:double-linked" }, true);
   put({ id: "procedure:deprecated", type: "procedure", status: "deprecated" }, true);
   put({ id: "decision:active-missing", type: "decision", status: "active", body: "protected durable activetoken" }, true);
   put({ id: "decision:active-verified", type: "decision", status: "active", last_verified_at: "2026-07-01" }, true);
-  put({ id: "decision:archive-linked-target", type: "decision", status: "active", supersedes: "proposal:archive-linked", last_verified_at: "2026-07-01" }, true);
-  put({ id: "procedure:archive-double-one", type: "procedure", status: "active", supersedes: "proposal:archive-double", last_verified_at: "2026-07-01" }, true);
-  put({ id: "procedure:archive-double-two", type: "procedure", status: "active", supersedes: "proposal:archive-double", last_verified_at: "2026-07-01" }, true);
+  put({ id: "decision:archive-linked-target", type: "decision", status: "active", promoted_from: "proposal:archive-linked", last_verified_at: "2026-07-01" }, true);
+  put({ id: "procedure:archive-double-one", type: "procedure", status: "active", promoted_from: "proposal:archive-double", last_verified_at: "2026-07-01" }, true);
+  put({ id: "procedure:archive-double-two", type: "procedure", status: "active", promoted_from: "proposal:archive-double", last_verified_at: "2026-07-01" }, true);
 
   for (const id of [
     "handoff:stale-open", "handoff:archived-old", "handoff:blocked-old",
@@ -194,10 +194,10 @@ try {
   const staleBackupPath = join(root, "stale-backup.sqlite");
   await store.backup(staleBackupPath);
   const staleDb = new DatabaseSync(staleBackupPath);
-  const markerRow = staleDb.prepare("SELECT value FROM meta WHERE key='maintenance_backup_v1'").get();
+  const markerRow = staleDb.prepare("SELECT value FROM meta WHERE key='maintenance_backup_v2'").get();
   const marker = JSON.parse(markerRow.value);
   marker.created_at = "2026-01-01T00:00:00.000Z";
-  staleDb.prepare("UPDATE meta SET value=? WHERE key='maintenance_backup_v1'").run(JSON.stringify(marker));
+  staleDb.prepare("UPDATE meta SET value=? WHERE key='maintenance_backup_v2'").run(JSON.stringify(marker));
   staleDb.close();
   assert.throws(() => store.prune({ apply: true, backupPath: staleBackupPath }), /not fresh/);
 

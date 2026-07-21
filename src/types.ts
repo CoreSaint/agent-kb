@@ -36,6 +36,37 @@ export interface PromotedProposalSummary extends RecordSummary {
   durable_target_ids: string[];
   has_exactly_one_durable_target: boolean;
 }
+export interface LegacyLineageAmbiguity {
+  record_id: string;
+  target_id: string;
+  reason: string;
+}
+
+export interface LineageAmbiguityReport {
+  total: number;
+  items: LegacyLineageAmbiguity[];
+  truncated: boolean;
+}
+
+export interface MigrationReport {
+  mode: "preview" | "applied";
+  path: string;
+  from_schema_version: 1;
+  to_schema_version: 2;
+  legacy_link_count: number;
+  promotion_count: number;
+  replacement_count: number;
+  ambiguity_count: number;
+  ambiguities: LegacyLineageAmbiguity[];
+  ambiguities_truncated: boolean;
+  promoted_proposal_review_count: number;
+  promoted_proposal_review: Array<{
+    proposal_id: string;
+    durable_target_ids: string[];
+  }>;
+  promoted_proposal_review_truncated: boolean;
+  quick_check: string;
+}
 
 export interface MaintenanceReport {
   generated_at: string;
@@ -51,6 +82,7 @@ export interface MaintenanceReport {
   closed_or_archived_handoffs: RecordSummary[];
   inactive_durable_records: RecordSummary[];
   active_durable_missing_verification: RecordSummary[];
+  lineage_migration_ambiguities: LineageAmbiguityReport;
 }
 
 export interface BackupResult {
@@ -87,7 +119,8 @@ export interface KbRecord {
   summary: string;
   confidence: Confidence;
   evidence: string[];
-  supersedes: string | null;
+  promoted_from: string | null;
+  superseded_by: string | null;
   created_at: string;
   updated_at: string;
   last_verified_at: string | null;
@@ -148,7 +181,8 @@ export interface UpsertInput {
   summary?: string;
   confidence?: Confidence;
   evidence?: string[];
-  supersedes?: string | null;
+  promoted_from?: string | null;
+  superseded_by?: string | null;
   last_verified_at?: string | null;
   source?: Source;
 }

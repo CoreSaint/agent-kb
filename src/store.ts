@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { openDb, kbPath } from "./db.ts";
 import { assertNoObviousSecrets } from "./secrets.ts";
+import { SCHEMA_VERSION } from "./schema.ts";
 import {
   allowedStatuses,
   confidences,
@@ -14,6 +15,7 @@ import {
   type BackupResult,
   type DurableType,
   type KbRecord,
+  type LegacyLineageAmbiguity,
   type MaintenanceReport,
   type PromoteInput,
   type PromotedProposalSummary,
@@ -74,7 +76,8 @@ function rowToRecord(value: unknown): KbRecord {
     summary: stringField(row, "summary"),
     confidence,
     evidence: parseJsonArray(row.evidence),
-    supersedes: nullableStringField(row, "supersedes"),
+    promoted_from: nullableStringField(row, "promoted_from"),
+    superseded_by: nullableStringField(row, "superseded_by"),
     created_at: stringField(row, "created_at"),
     updated_at: stringField(row, "updated_at"),
     last_verified_at: nullableStringField(row, "last_verified_at"),
@@ -329,7 +332,7 @@ function slug(text: string): string {
 
 const DAY_MS = 86_400_000;
 const BACKUP_FRESH_MS = 15 * 60_000;
-const BACKUP_MARKER_KEY = "maintenance_backup_v1";
+const BACKUP_MARKER_KEY = "maintenance_backup_v2";
 const DURABLE_SQL = "'decision','procedure','troubleshoot','landscape','preference'";
 
 interface BackupMarker {
@@ -410,7 +413,7 @@ export class KbStore {
   }
   path(): string { return this.dbPath; }
   dispose(): void { this.db.close(); }
-  init(): { path: string; schemaVersion: number } { return { path: this.path(), schemaVersion: 1 }; }
+  init(): { path: string; schemaVersion: number } { return { path: this.path(), schemaVersion: SCHEMA_VERSION }; }
 
   get(id: string): KbRecord | null {
     const row = this.db.prepare("SELECT * FROM records WHERE id = ?").get(id);
@@ -441,14 +444,16 @@ export class KbStore {
     const record = {
       id: input.id.trim(), type: input.type, title: input.title.trim(), status,
       project: project?.trim() || null, tags: JSON.stringify(tags), body, summary,
-      confidence, evidence: JSON.stringify(evidence), supersedes: input.supersedes ?? existing?.supersedes ?? null,
+      confidence, evidence: JSON.stringify(evidence),
+      promoted_from: input.promoted_from !== undefined ? input.promoted_from : existing?.promoted_from ?? null,
+      superseded_by: input.superseded_by !== undefined ? input.superseded_by : existing?.superseded_by ?? null,
       created_at: existing?.created_at ?? ts, updated_at: ts,
       last_verified_at: input.last_verified_at !== undefined ? input.last_verified_at : existing?.last_verified_at ?? null,
       source,
     };
-    this.db.prepare(`INSERT INTO records (id,type,title,status,project,tags,body,summary,confidence,evidence,supersedes,created_at,updated_at,last_verified_at,source)
-      VALUES (@id,@type,@title,@status,@project,@tags,@body,@summary,@confidence,@evidence,@supersedes,@created_at,@updated_at,@last_verified_at,@source)
-      ON CONFLICT(id) DO UPDATE SET title=excluded.title,status=excluded.status,project=excluded.project,tags=excluded.tags,body=excluded.body,summary=excluded.summary,confidence=excluded.confidence,evidence=excluded.evidence,supersedes=excluded.supersedes,updated_at=excluded.updated_at,last_verified_at=excluded.last_verified_at,source=excluded.source`).run(record);
+    this.db.prepare(`INSERT INTO records (id,type,title,status,project,tags,body,summary,confidence,evidence,promoted_from,superseded_by,created_at,updated_at,last_verified_at,source)
+      VALUES (@id,@type,@title,@status,@project,@tags,@body,@summary,@confidence,@evidence,@promoted_from,@superseded_by,@created_at,@updated_at,@last_verified_at,@source)
+      ON CONFLICT(id) DO UPDATE SET title=excluded.title,status=excluded.status,project=excluded.project,tags=excluded.tags,body=excluded.body,summary=excluded.summary,confidence=excluded.confidence,evidence=excluded.evidence,promoted_from=excluded.promoted_from,superseded_by=excluded.superseded_by,updated_at=excluded.updated_at,last_verified_at=excluded.last_verified_at,source=excluded.source`).run(record);
     const saved = this.get(input.id);
     if (!saved) throw new Error(`Failed to read saved record ${input.id}.`);
     return saved;
@@ -467,7 +472,7 @@ export class KbStore {
       id, type: input.type, title, status, project: input.project !== undefined ? input.project : src.project,
       tags: input.tags ?? src.tags, body: input.body ?? src.body, summary: input.summary ?? src.summary,
       confidence: input.confidence ?? src.confidence, evidence: input.evidence ?? src.evidence,
-      supersedes: sourceId, last_verified_at: input.last_verified_at ?? null, source: src.source === "user" ? "user" : "agent_promoted",
+      promoted_from: sourceId, last_verified_at: input.last_verified_at ?? null, source: src.source === "user" ? "user" : "agent_promoted",
     }, { forceDurable: true });
     if (src.type === "proposal") this.upsert({ ...src, status: "promoted" }, { forceDurable: false });
     return durable;
@@ -481,11 +486,12 @@ export class KbStore {
   }
 
   supersede(oldId: string, newId: string): KbRecord {
+    if (oldId === newId) throw new Error("A record cannot supersede itself.");
     const old = this.get(oldId);
     if (!old) throw new Error(`Old record not found: ${oldId}.`);
     if (!this.get(newId)) throw new Error(`New record not found: ${newId}.`);
     const status = old.type === "decision" ? "superseded" : allowedStatuses[old.type].includes("deprecated") ? "deprecated" : "archived";
-    return this.upsert({ ...old, status, supersedes: newId }, { forceDurable: includes(durableTypes, old.type) });
+    return this.upsert({ ...old, status, superseded_by: newId }, { forceDurable: includes(durableTypes, old.type) });
   }
 
   /**
@@ -620,8 +626,8 @@ export class KbStore {
 
     const promoted = summaries("type='proposal' AND status='promoted'");
     const targets = this.db.prepare(
-      `SELECT supersedes AS proposal_id,id AS target_id FROM records
-       WHERE type IN (${DURABLE_SQL}) AND supersedes IN
+      `SELECT promoted_from AS proposal_id,id AS target_id FROM records
+       WHERE type IN (${DURABLE_SQL}) AND promoted_from IN
        (SELECT id FROM records WHERE type='proposal' AND status='promoted')
        ORDER BY id`,
     ).all();
@@ -643,6 +649,20 @@ export class KbStore {
       };
     });
 
+    const ambiguityTotal = Number(objectRow(
+      this.db.prepare("SELECT COUNT(*) AS count FROM lineage_migration_ambiguities").get(),
+    ).count);
+    const migrationAmbiguities: LegacyLineageAmbiguity[] = this.db.prepare(
+      "SELECT record_id,target_id,reason FROM lineage_migration_ambiguities ORDER BY record_id,target_id LIMIT 100",
+    ).all().map((value) => {
+      const row = objectRow(value);
+      return {
+        record_id: stringField(row, "record_id"),
+        target_id: stringField(row, "target_id"),
+        reason: stringField(row, "reason"),
+      };
+    });
+
     return {
       generated_at: now(),
       stale_days: staleDays,
@@ -657,6 +677,11 @@ export class KbStore {
       closed_or_archived_handoffs: summaries("type='handoff' AND status IN ('closed','archived')"),
       inactive_durable_records: summaries(`type IN (${DURABLE_SQL}) AND status IN ('deprecated','superseded','archived')`),
       active_durable_missing_verification: summaries(`type IN (${DURABLE_SQL}) AND status IN ('active','done') AND last_verified_at IS NULL`),
+      lineage_migration_ambiguities: {
+        total: ambiguityTotal,
+        items: migrationAmbiguities,
+        truncated: ambiguityTotal > migrationAmbiguities.length,
+      },
     };
   }
 
@@ -701,7 +726,7 @@ export class KbStore {
 
   private databaseSignature(db: DatabaseSync): string {
     const metadata = db.prepare(
-      "SELECT id,type,status,updated_at,last_verified_at,supersedes FROM records ORDER BY id",
+      "SELECT id,type,status,updated_at,last_verified_at,promoted_from,superseded_by FROM records ORDER BY id",
     ).all();
     return createHash("sha256").update(JSON.stringify(metadata)).digest("hex");
   }
@@ -791,8 +816,8 @@ export class KbStore {
     const terminalCutoff = new Date(Date.now() - 90 * DAY_MS).toISOString();
     const rows = this.db.prepare(
       `SELECT r.id,r.type,r.status,r.updated_at,
-        (SELECT COUNT(*) FROM records d WHERE d.supersedes=r.id AND d.type IN (${DURABLE_SQL})) AS target_count,
-        (SELECT MIN(d.id) FROM records d WHERE d.supersedes=r.id AND d.type IN (${DURABLE_SQL})) AS target_id
+        (SELECT COUNT(*) FROM records d WHERE d.promoted_from=r.id AND d.type IN (${DURABLE_SQL})) AS target_count,
+        (SELECT MIN(d.id) FROM records d WHERE d.promoted_from=r.id AND d.type IN (${DURABLE_SQL})) AS target_id
        FROM records r
        WHERE (r.type='proposal' AND r.status IN ('promoted','archived') AND r.updated_at<=@promoted_cutoff)
           OR (r.type='proposal' AND r.status='rejected' AND r.updated_at<=@terminal_cutoff)

@@ -12,7 +12,7 @@ Records have a type-specific lifecycle:
 - `handoff` records carry bounded work-in-progress continuity and move from `open` or `blocked` to `closed`, then may be archived.
 - Durable records remain active until explicitly superseded, deprecated, or archived. Maintenance reports lifecycle candidates but does not silently promote or rewrite knowledge.
 
-Schema v1 uses `supersedes` for both a durable record's proposal source and an old durable record's replacement. That overloaded lineage is a known limitation deferred to A3.
+Schema v2 keeps promotion provenance and replacement lineage independent. `promoted_from` points from a durable record to its source proposal or explicitly promoted handoff. `superseded_by` points from an older record to its replacement. Promoting sets `promoted_from`; superseding sets `superseded_by` without erasing promotion provenance.
 
 Session JSONL is an execution transcript, not a durable knowledge source and not an ingestion feed. Pi observational memory may summarize context for continuity within a session and across compaction, but it does not promote records, replace handoffs, or become authoritative agent-KB content.
 
@@ -37,6 +37,25 @@ Default database path is `~/.local/share/agent-kb/kb.sqlite`; `AGENT_KB_PATH` ov
 
 - `kb search` defaults to **TOON** compact hits (id, type, status, project, confidence, title, summary) for token-efficient LLM/tool output. Pass `--json` for full records.
 - Other commands still print JSON by default.
+
+## Schema-v1 migration
+
+Normal open, search, and get operations refuse schema-v1 databases; they never migrate implicitly. Set `AGENT_KB_PATH` to the intended database, preview first, inspect every ambiguity, and only then apply:
+
+```sh
+AGENT_KB_PATH=/private/disposable-copy.sqlite ./bin/kb migrate
+AGENT_KB_PATH=/private/disposable-copy.sqlite ./bin/kb migrate --apply
+```
+
+Preview opens the database read-only. Apply supports schema v1 only, runs in one transaction, updates `meta.schema_version` last, verifies SQLite integrity, and refuses reapplication after schema v2. Migration classifies only these preserved facts:
+
+- a durable record pointing to an existing proposal or handoff becomes `promoted_from`;
+- any record pointing to an existing durable record becomes `superseded_by`;
+- missing targets, self-links, and unsafe source/target type combinations are not inferred.
+
+Every unclassified legacy pair is retained with a reason in `lineage_migration_ambiguities`. Migration output is metadata-only and bounded to 100 ambiguity rows and 100 promoted-proposal review rows, with totals and truncation flags. `maintain` exposes the same durable ambiguity audit without bodies or evidence. Promoted proposals with zero or multiple explicit durable targets stay visible for review and cannot be pruned.
+
+Example: promoting `proposal:cache` creates `decision:cache` with `promoted_from: "proposal:cache"` and `superseded_by: null`. Later superseding it with `decision:cache-v2` changes only `decision:cache.superseded_by`; its `promoted_from` remains `"proposal:cache"`.
 
 ## Search
 
@@ -82,7 +101,7 @@ Maintenance commands return metadata and IDs, not record bodies:
 ./bin/kb prune --apply --backup /private/path/kb-backup.sqlite
 ```
 
-- `maintain` is read-only. It categorizes stale open/blocked handoffs; promoted proposals and their durable-target linkage count; rejected proposals; closed/archived handoffs; inactive durable records; and active/done durable records without `last_verified_at`. It also reports the database path, main-file size, and `PRAGMA quick_check`.
+- `maintain` is read-only. It categorizes stale open/blocked handoffs; promoted proposals and their explicit `promoted_from` durable-target linkage count; rejected proposals; closed/archived handoffs; inactive durable records; active/done durable records without `last_verified_at`; and bounded schema-migration ambiguities. It also reports the database path, main-file size, and `PRAGMA quick_check`.
 - `archive` is reversible and intentionally narrow. It accepts closed handoffs; promoted/rejected proposals; superseded decisions; deprecated procedures, landscapes, and preferences; and done/deprecated troubleshoot records. It refuses open/blocked records, drafts, active durable records, and records already archived.
 - `restore` only accepts archived records and validates the requested status against the record type.
 - `verify` accepts an exact, valid `YYYY-MM-DD` calendar date. It changes only `last_verified_at` and `updated_at`; verification must follow an explicit evidence review.
@@ -108,4 +127,5 @@ AGENT_KB_PATH=/tmp/agent-kb-toon.sqlite npm run smoke:toon
 npm run smoke:maintenance
 npm run smoke:eval
 npm run smoke:diagnostics
+npm run smoke:migration
 ```
