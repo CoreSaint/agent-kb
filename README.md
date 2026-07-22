@@ -2,6 +2,14 @@
 
 Local typed SQLite knowledge base for agent handoffs, proposals, and promoted durable knowledge.
 
+## Install with an agent
+
+Give a shell-capable coding agent this repository URL and say:
+
+> Install the portable agent-memory vault from https://github.com/CoreSaint/agent-kb into `<destination>`. Follow `INSTALL.md`; do not use sudo or overwrite existing files.
+
+[INSTALL.md](INSTALL.md) is the authoritative first-copy bootstrap. It safely copies the `vault/` template, reuses the checkout as the private local tool, and then hands control to the copied vault's `INIT.md`. Do not initialize the repository's source `vault/` directory in place.
+
 ## Memory architecture and authority
 
 agent-KB is the runtime authority for curated agent continuity within its scope, including promoted typed records. In a contract vault, reviewed Markdown remains the human-facing authority. Agent-KB never overrides canonical vault policy or documentation, repository code and repository-local documentation, or live external-system state in their respective domains. Agents should inspect those canonical sources directly before acting when current truth matters; a KB hit provides durable agent knowledge and continuity within its scope, not a replacement for domain authority outside it.

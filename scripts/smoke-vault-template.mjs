@@ -60,6 +60,21 @@ function installSkill(sourcePath, targetPath) {
 
 let report;
 try {
+  const rootReadme = readFileSync(join(repository, "README.md"), "utf8");
+  const rootInstall = readFileSync(join(repository, "INSTALL.md"), "utf8");
+  const rootAgents = readFileSync(join(repository, "AGENTS.md"), "utf8");
+  assert.match(rootReadme, /\[INSTALL\.md\]\(INSTALL\.md\)/);
+  assert.match(rootReadme, /Do not initialize the repository's source `vault\/` directory in place/i);
+  assert.match(rootInstall, /Obtain an explicit destination from the user/i);
+  assert.match(rootInstall, /destination must not already exist/i);
+  assert.match(rootInstall, /https:\/\/github\.com\/CoreSaint\/agent-kb\.git/);
+  assert.match(rootInstall, /cp -a .*agent-kb\/vault.*destination/);
+  assert.match(rootInstall, /\.agent-kb\/tool/);
+  assert.match(rootInstall, /Process `INIT\.md` completely/i);
+  assert.match(rootInstall, /Do not initialize the repository's source `vault\/` directory in place/i);
+  assert.match(rootAgents, /read and follow \[INSTALL\.md\]\(INSTALL\.md\)/i);
+  assert.match(rootAgents, /never initialize the repository's source `vault\/` directory in place/i);
+
   assert.equal(existsSync(join(source, ".agent-kb")), false, "template packages runtime state");
   const packagedFiles = readdirSync(source, { recursive: true, encoding: "utf8" });
   assert.equal(packagedFiles.some((path) => /(?:^|\/)kb\.sqlite(?:-(?:wal|shm))?$/.test(path)), false, "template packages a database binary");
