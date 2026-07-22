@@ -2,7 +2,7 @@
 
 ## Goal
 
-Create a local typed SQLite knowledge base with CLI and a Pi coding-agent extension so durable agent knowledge is promote/search based, not Hindsight/chat authority.
+Create a local typed SQLite knowledge base, agent-agnostic vault template, and portable skill so durable agent knowledge is promote/search based rather than transcript authority.
 
 ## Constraints
 
@@ -12,7 +12,6 @@ Create a local typed SQLite knowledge base with CLI and a Pi coding-agent extens
 - No embeddings, no repo ingest, no network, no Hindsight API
 - Do not commit/push unless asked
 - Do not store secrets; reject obvious secret patterns on upsert
-- Do not disable existing Hindsight extension
 
 ## Layout (create)
 
@@ -29,17 +28,14 @@ Create a local typed SQLite knowledge base with CLI and a Pi coding-agent extens
     store.ts        # CRUD/search/promote/close/supersede
     cli.ts          # kb CLI entry
   bin/kb            # executable shim → node src/cli or built file
-  extension/        # Pi extension (copy or symlink target: ~/.pi/agent/extensions/agent-kb/)
-    index.ts
-    README.md
+  extension/        # optional legacy Pi integration; not portable setup
+  skills/agent-memory-vault/SKILL.md
+                    # source for ~/.agents/skills/agent-memory-vault/
 ```
 
-Also create/update:
+The deployable `vault/` scaffold contains concise human/agent instructions, contract-vault markers, the local `kb` launcher, ignored `.agent-kb/` runtime state, and `.gitkeep` files only for required empty directories. `INIT.md` directs an agent to install `https://github.com/CoreSaint/agent-kb.git` at `.agent-kb/tool/`, install the repository skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initialize `.agent-kb/kb.sqlite`, verify it, and remove `INIT.md` only after success.
 
-- `~/.pi/agent/skills/kb-recall/SKILL.md`
-- Update `~/.pi/agent/skills/knowledge-capture/SKILL.md` to prefer agent-KB promote; vault optional; no default Hindsight pointer
-
-Prefer implementing the core library so both CLI and extension import the same store (extension can spawn `kb` CLI if in-process import is awkward—**prefer in-process import of store**).
+Portable setup is CLI- and filesystem-based. It has no harness APIs, extension dependency, or machine-specific absolute path. The in-folder `AGENTS.md` duplicates the essential workflow as a fallback when global skills are unavailable. The existing `extension/` directory is optional legacy Pi integration and is neither installed nor required by the template.
 
 ## Schema
 
@@ -125,44 +121,17 @@ Init writes `meta.authority_domain_id`. Public adapters set `AGENT_KB_EXPECTED_D
 
 Structured upsert/promote input rejects unknown fields, keeps tags/evidence as JSON arrays, and defaults omitted upsert provenance to `agent`. Legacy interactive flags remain available. Promotion never uses general upsert semantics to replace an existing durable ID.
 
-## Pi extension tools
+## Portable skill and optional legacy integration
 
-Register tools (names):
+The source skill is `skills/agent-memory-vault/SKILL.md`. Bootstrap installs it at `~/.agents/skills/agent-memory-vault/SKILL.md` using private user directories. An absent target is copied, a byte-identical target is accepted, and a differing target is a fail-closed conflict that is never overwritten.
 
-- `kb_search`
-- `kb_get`
-- `kb_upsert`
-- `kb_promote`
-- `kb_close`
-- `kb_supersede`
-- `kb_purge_candidates`
-- `kb_status` (db path, counts by type/status)
+The skill uses cwd contract-vault discovery and only the root `./kb` launcher. It covers search/get, handoffs, proposals, deliberate promotion, Markdown authority, secret prohibition, and attachment failures without harness-specific APIs.
 
-Mirror hindsight extension style in `~/.pi/agent/extensions/hindsight/index.ts` for ExtensionAPI patterns.
-
-Install extension by writing to `~/.pi/agent/extensions/agent-kb/index.ts` (can re-export from repo or be the real file). Prefer **repo as source of truth** and copy/symlink into `~/.pi/agent/extensions/agent-kb`.
-
-## Skill: kb-recall
-
-Path: `~/.pi/agent/skills/kb-recall/SKILL.md`
-
-- When to use
-- Retrieval order: open handoffs → troubleshoot → procedure → decision → landscape → preference
-- Always cite record ids
-- Label possibly stale if last_verified_at old / null on procedures & landscapes
-- Code questions: use repo tools, not KB as code authority
-- Hindsight only if user asks or KB miss (transition)
-
-## knowledge-capture skill update
-
-- Inside capture flow: prefer `kb_upsert` proposal + `kb_promote` for durable
-- Vault: optional human-facing Markdown when user wants or contract vault explicitly requested
-- Do not default Hindsight pointer retains
-- Point at transition procedure path in personal vault
+The repository's `extension/` directory may remain as optional legacy Pi integration. It is outside the deployable template and portable setup; no installed adapter is modified or required.
 
 ## Acceptance checks
 
-Every executable check uses disposable cwd, HOME, and database paths. `scripts/test-cli-contract.mjs` sets `umask 077`, asserts its resolved database remains below its temporary root, and removes the root afterward. `scripts/test-vault-discovery.mjs` exercises root/nested/symlink discovery, override precedence, legacy fallback, no-create reads, and vault-root permission preservation entirely below its temporary root.
+Every executable check uses disposable cwd, HOME, and database paths. `scripts/test-cli-contract.mjs` covers the JSON/SQLite contract; `scripts/test-vault-discovery.mjs` covers path precedence and no-create discovery; `scripts/smoke-vault-template.mjs` copies the scaffold, supplies this repository as its local tool without network/global installation, and verifies launcher, init/status, ignore rules, absent/identical/conflicting skill installation, private modes, conflict preservation, and cleanup. A disposable Codex acceptance repeats bootstrap and a handoff → proposal → promote → search/get workflow under a temporary HOME.
 
 ```bash
 TEST_ROOT="$(mktemp -d)"
@@ -172,6 +141,7 @@ export AGENT_KB_PATH="$TEST_ROOT/kb.sqlite"
 test "${AGENT_KB_PATH#"$TEST_ROOT"/}" != "$AGENT_KB_PATH"
 npm run test:contract
 npm run test:vault-discovery
+npm run smoke:vault-template
 npm run smoke:search
 npm run smoke:toon
 npm run smoke:maintenance

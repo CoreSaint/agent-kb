@@ -1,6 +1,6 @@
 # agent-KB
 
-Local typed SQLite knowledge base for Pi agent handoffs, proposals, and promoted durable knowledge.
+Local typed SQLite knowledge base for agent handoffs, proposals, and promoted durable knowledge.
 
 ## Memory architecture and authority
 
@@ -14,7 +14,7 @@ Records have a type-specific lifecycle:
 
 Schema v2 keeps promotion provenance and replacement lineage independent. `promoted_from` points from a durable record to its source proposal or explicitly promoted handoff. `superseded_by` points from an older record to its replacement. Promoting sets `promoted_from`; superseding sets `superseded_by` without erasing promotion provenance.
 
-Session JSONL is an execution transcript, not a durable knowledge source and not an ingestion feed. Pi observational memory may summarize context for continuity within a session and across compaction, but it does not promote records, replace handoffs, or become authoritative agent-KB content.
+Session transcripts and observational summaries are execution context, not durable knowledge sources or ingestion feeds. They do not promote records, replace handoffs, or become authoritative agent-KB content.
 
 Explicit non-goals:
 
@@ -22,6 +22,12 @@ Explicit non-goals:
 - no automatic transcript or observational-memory promotion;
 - no Hindsight capture or mutation;
 - no embeddings, vector retrieval, or active recall yet.
+
+## Copyable vault template
+
+`vault/` is the minimal agent-agnostic deployable scaffold; the folder name does not rename the `kb` CLI or `.agent-kb/kb.sqlite`. Copy it, open a shell-capable agent in the copied root, and let the agent process `INIT.md` before normal work. Bootstrap checks Git and Node.js 26+, installs the repository into ignored `.agent-kb/tool/`, installs the reusable source skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initializes vault-local SQLite through `./kb`, verifies status/path/modes, and removes `INIT.md` only after every check succeeds. `AGENTS.md` remains the complete in-folder fallback for harnesses that do not load global skills.
+
+The automated template smoke test never clones or installs globally. It copies the scaffold to a disposable directory, supplies this repository as the local tool checkout, and installs the skill only below a temporary `HOME`.
 
 ## CLI and database attachment
 
@@ -44,7 +50,7 @@ Database path precedence is deterministic:
 
 Physical resolution means a cwd reached through a symlink discovers the vault containing the symlink target, not the directory containing the symlink. Path resolution and ordinary reads never create `.agent-kb` or SQLite files. Explicit init may create `.agent-kb` with mode `0700`, creates the schema-v2 database with mode `0600`, and never changes the contract-vault root's permissions. Init also stores a generated, non-secret authority-domain UUID. Tests may supply a validated UUID with `kb init --authority-domain UUID`; `kb status` returns it without mutation.
 
-Public adapters should bind attachment by setting `AGENT_KB_EXPECTED_DOMAIN` to the UUID returned by init or status. A wrong UUID, or any expected UUID against a legacy unbound schema-v2 database, fails closed with `DOMAIN_MISMATCH`. Existing in-process Pi callers remain compatible: an existing schema-v2 database without authority metadata opens when no expected-domain binding is supplied, and status reports a null domain until it is explicitly reinitialized outside this contract slice.
+Public adapters should bind attachment by setting `AGENT_KB_EXPECTED_DOMAIN` to the UUID returned by init or status. A wrong UUID, or any expected UUID against a legacy unbound schema-v2 database, fails closed with `DOMAIN_MISMATCH`. Existing in-process callers remain compatible: an existing schema-v2 database without authority metadata opens when no expected-domain binding is supplied, and status reports a null domain until it is explicitly reinitialized outside this contract slice.
 
 - `kb search` defaults to **TOON** compact hits (id, type, status, project, confidence, title, summary).
 - Other interactive commands retain readable JSON output.
@@ -151,7 +157,7 @@ Maintenance commands return metadata and IDs, not record bodies:
 
 Open, blocked, active, fresh, unlinked, multiply linked, and durable records are never selected automatically. Archival alone never makes an arbitrary proposal eligible: an archived proposal still needs exactly one durable record linked through the promotion relationship, and `archive` resets its 30-day retention clock through `updated_at`. Apply mode requires `--backup` naming a private, valid backup created by `kb backup` for the same database within the last 15 minutes. The backup must still match current record metadata, so create it after all intended lifecycle changes and immediately before applying. Deletion runs in one transaction; foreign-key, FTS-trigger behavior, and `quick_check` are verified by the maintenance smoke script.
 
-Run checks only with an explicit temporary HOME and database path:
+Run checks only with explicit temporary cwd, HOME, and database paths. Template validation installs the portable skill only below its temporary HOME:
 
 ```sh
 TEST_ROOT="$(mktemp -d)"
@@ -161,6 +167,7 @@ export AGENT_KB_PATH="$TEST_ROOT/kb.sqlite"
 test "${AGENT_KB_PATH#"$TEST_ROOT"/}" != "$AGENT_KB_PATH"
 npm run test:contract
 npm run test:vault-discovery
+npm run smoke:vault-template
 npm run smoke:search
 npm run smoke:toon
 npm run smoke:maintenance
