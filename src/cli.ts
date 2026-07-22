@@ -218,6 +218,12 @@ kb backup [--output path] [--json]
 kb prune [--apply --backup fresh-maintenance-backup] [--json]
 kb status [--json]
 
+Record types: ${recordTypes.join(" | ")}
+Durable promotion types: ${durableTypes.join(" | ")}
+Upsert JSON fields: id, type, title, status, project, tags, body, summary, confidence, evidence, source, durable.
+Promote JSON fields: id, type, title, status, project, tags, body, summary, confidence, evidence, last_verified_at.
+Promotion and replacement lineage are managed by promote and supersede; they are not accepted as upsert fields.
+
 Only init creates a database. Without AGENT_KB_PATH, the nearest physical cwd ancestor containing CONTRACT.md and MAP.md uses .agent-kb/kb.sqlite; otherwise the legacy home path is used. Set AGENT_KB_EXPECTED_DOMAIN to bind adapter attachment to an initialized authority-domain UUID.`;
 }
 

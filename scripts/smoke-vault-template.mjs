@@ -92,8 +92,54 @@ try {
   assert.match(instructions, /Remove it only after all checks succeed/);
   assert.match(instructions, /\.agents\/skills\/agent-memory-vault\/SKILL\.md/);
   assert.match(instructions, /refusing to overwrite/);
-  assert.ok(existsSync(join(repository, "skills", "agent-memory-vault", "SKILL.md")), "source skill is missing");
-  assert.match(readFileSync(join(copy, "AGENTS.md"), "utf8"), /If `INIT\.md` exists, process it completely before normal work/);
+  const skillPath = join(repository, "skills", "agent-memory-vault", "SKILL.md");
+  assert.ok(existsSync(skillPath), "source skill is missing");
+
+  const contract = readFileSync(join(copy, "CONTRACT.md"), "utf8");
+  assert.match(contract, /complete behavioral authority/i);
+  assert.match(contract, /Reviewed, typed Markdown is the human-facing authority/i);
+  assert.match(contract, /Repositories, tickets, and live systems remain authoritative for their current state/i);
+  assert.match(contract, /\.agent-kb\/kb\.sqlite.*runtime memory/i);
+  assert.match(contract, /Search .* before creating/i);
+  assert.match(contract, /one canonical home/i);
+  assert.match(contract, /Reading context grants no authority to mutate an external system/i);
+  for (const gatedWrite of ["Publishing", "pushing", "sending", "tickets", "deploying", "production", "external write"]) {
+    assert.match(contract, new RegExp(gatedWrite, "i"), `contract is missing external-write gate: ${gatedWrite}`);
+  }
+  assert.match(contract, /Never store secrets, credentials, tokens, private keys/i);
+  for (const directory of requiredDirectories) {
+    assert.ok(contract.includes(`\`${directory}/\``), `contract is missing type route ${directory}/`);
+  }
+  for (const type of ["handoff", "proposal", "decision", "procedure", "troubleshoot", "landscape", "preference"]) {
+    assert.ok(contract.includes(`\`${type}\``), `contract is missing runtime type ${type}`);
+  }
+  assert.match(contract, /handoff.*active work/is);
+  assert.match(contract, /verified current state, blockers or stop conditions, and the next concrete action/i);
+  assert.match(contract, /proposal.*uncertain/is);
+  assert.match(contract, /Promote .* only after deliberate review/i);
+  assert.match(contract, /runtime promotion does not update Markdown automatically/i);
+  assert.match(contract, /Verify mutable claims/i);
+  assert.match(contract, /Update the canonical record.*supersede/is);
+  assert.match(contract, /do not create competing duplicates/i);
+  assert.match(contract, /If SQLite is unavailable or attachment fails/i);
+  assert.match(contract, /Do not initialize, select, or create an alternate database implicitly/i);
+  assert.match(contract, /Contract changes and procedure changes that alter behavior require human approval/i);
+  assert.match(contract, /vault-relative links/i);
+
+  const map = readFileSync(join(copy, "MAP.md"), "utf8");
+  assert.match(map, /navigation only/i);
+  assert.match(map, /All behavioral rules live in `CONTRACT\.md`/i);
+
+  const agents = readFileSync(join(copy, "AGENTS.md"), "utf8");
+  assert.match(agents, /If `INIT\.md` is present, process it completely before normal work/i);
+  assert.match(agents, /Read `CONTRACT\.md` first, then `MAP\.md`/i);
+  assert.match(agents, /load and use `agent-memory-vault`/i);
+  assert.match(agents, /global skills are unsupported.*`CONTRACT\.md` remains the complete behavioral authority/is);
+  assert.match(agents, /adds no rules.*must not become a parallel source of truth/is);
+  assert.ok(agents.split("\n").length <= 16, "AGENTS.md is no longer a thin adapter");
+
+  const skill = readFileSync(skillPath, "utf8");
+  assert.match(skill, /`CONTRACT\.md` owns behavior and wins .* conflicts/i);
 
   const missingTool = run(join(copy, "kb"), ["status", "--json"]);
   assert.equal(missingTool.status, 1);
@@ -114,6 +160,15 @@ try {
   const versionEnvelope = JSON.parse(version.stdout);
   assert.equal(versionEnvelope.ok, true);
   assert.equal(versionEnvelope.contract_version, "1");
+
+  const help = run(join(copy, "kb"), ["help"]);
+  assert.equal(help.status, 0, help.stderr);
+  for (const type of ["handoff", "proposal", "decision", "procedure", "troubleshoot", "landscape", "preference"]) {
+    assert.match(help.stdout, new RegExp(`\\b${type}\\b`), `help is missing record type ${type}`);
+  }
+  assert.match(help.stdout, /Upsert JSON fields: id, type, title.*source, durable/);
+  assert.match(help.stdout, /Promote JSON fields: id, type, title.*last_verified_at/);
+  assert.match(help.stdout, /lineage are managed by promote and supersede/i);
 
   const skillSource = join(copy, ".agent-kb", "tool", "skills", "agent-memory-vault", "SKILL.md");
   const skillTarget = join(home, ".agents", "skills", "agent-memory-vault", "SKILL.md");

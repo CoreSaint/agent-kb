@@ -35,7 +35,7 @@ Create a local typed SQLite knowledge base, agent-agnostic vault template, and p
 
 The deployable `vault/` scaffold contains concise human/agent instructions, contract-vault markers, the local `kb` launcher, ignored `.agent-kb/` runtime state, and `.gitkeep` files only for required empty directories. `INIT.md` directs an agent to install `https://github.com/CoreSaint/agent-kb.git` at `.agent-kb/tool/`, install the repository skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initialize `.agent-kb/kb.sqlite`, verify it, and remove `INIT.md` only after success.
 
-Portable setup is CLI- and filesystem-based. It has no harness APIs, extension dependency, or machine-specific absolute path. The in-folder `AGENTS.md` duplicates the essential workflow as a fallback when global skills are unavailable. The existing `extension/` directory is optional legacy Pi integration and is neither installed nor required by the template.
+Portable setup is CLI- and filesystem-based. It has no harness APIs, extension dependency, or machine-specific absolute path. The in-folder `CONTRACT.md` is the complete behavioral fallback when global skills are unavailable; `AGENTS.md` is a thin host/harness adapter and does not duplicate policy. The existing `extension/` directory is optional legacy Pi integration and is neither installed nor required by the template.
 
 ## Schema
 
@@ -125,7 +125,7 @@ Structured upsert/promote input rejects unknown fields, keeps tags/evidence as J
 
 The source skill is `skills/agent-memory-vault/SKILL.md`. Bootstrap installs it at `~/.agents/skills/agent-memory-vault/SKILL.md` using private user directories. An absent target is copied, a byte-identical target is accepted, and a differing target is a fail-closed conflict that is never overwritten.
 
-The skill uses cwd contract-vault discovery and only the root `./kb` launcher. It covers search/get, handoffs, proposals, deliberate promotion, Markdown authority, secret prohibition, and attachment failures without harness-specific APIs.
+The skill uses cwd contract-vault discovery and only the root `./kb` launcher. It provides search/get, handoff, proposal, and promotion command mechanics while deferring behavior, authority, lifecycle, and safety policy to `CONTRACT.md`.
 
 The repository's `extension/` directory may remain as optional legacy Pi integration. It is outside the deployable template and portable setup; no installed adapter is modified or required.
 

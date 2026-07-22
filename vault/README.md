@@ -1,7 +1,7 @@
 # Agent memory vault
 
-This folder is a copyable human-and-agent workspace. Open a shell-capable agent in this directory. If `INIT.md` exists, the agent must complete it before normal work.
+This folder is a copyable human-and-agent workspace. Open a shell-capable agent in this directory. If `INIT.md` exists, complete it before normal work.
 
-Markdown is the human-facing authority for policy, navigation, and reviewed project knowledge. The vault-local `.agent-kb/kb.sqlite` is runtime memory for agents; it is private, ignored, and never replaces the Markdown authority.
+`CONTRACT.md` is the complete behavioral authority and wins over this overview, `MAP.md`, `AGENTS.md`, and the reusable skill on conflict. `MAP.md` is navigation only, and `AGENTS.md` only adapts the contract to a host or harness.
 
-Use the local launcher as `./kb`. Agents search before writing, use handoffs for active continuity, capture uncertain durable knowledge as proposals, and promote it deliberately. Never store credentials or secrets.
+Use the vault-local launcher as `./kb`; run `./kb help` for command syntax. Runtime memory stays in the private, ignored `.agent-kb/kb.sqlite`. The contract defines its relationship to reviewed Markdown and current source systems, plus all write, lifecycle, and safety rules.

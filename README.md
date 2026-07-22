@@ -4,7 +4,7 @@ Local typed SQLite knowledge base for agent handoffs, proposals, and promoted du
 
 ## Memory architecture and authority
 
-agent-KB is authoritative for curated agent continuity within its scope, including promoted typed records. It never overrides canonical vault policy or human-facing documentation, repository code and repository-local documentation, or live external-system state in their respective domains. Agents should inspect those canonical sources directly before acting when current truth matters; a KB hit provides durable agent knowledge and continuity within its scope, not a replacement for domain authority outside it.
+agent-KB is the runtime authority for curated agent continuity within its scope, including promoted typed records. In a contract vault, reviewed Markdown remains the human-facing authority. Agent-KB never overrides canonical vault policy or documentation, repository code and repository-local documentation, or live external-system state in their respective domains. Agents should inspect those canonical sources directly before acting when current truth matters; a KB hit provides durable agent knowledge and continuity within its scope, not a replacement for domain authority outside it.
 
 Records have a type-specific lifecycle:
 
@@ -25,7 +25,7 @@ Explicit non-goals:
 
 ## Copyable vault template
 
-`vault/` is the minimal agent-agnostic deployable scaffold; the folder name does not rename the `kb` CLI or `.agent-kb/kb.sqlite`. Copy it, open a shell-capable agent in the copied root, and let the agent process `INIT.md` before normal work. Bootstrap checks Git and Node.js 26+, installs the repository into ignored `.agent-kb/tool/`, installs the reusable source skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initializes vault-local SQLite through `./kb`, verifies status/path/modes, and removes `INIT.md` only after every check succeeds. `AGENTS.md` remains the complete in-folder fallback for harnesses that do not load global skills.
+`vault/` is the minimal agent-agnostic deployable scaffold; the folder name does not rename the `kb` CLI or `.agent-kb/kb.sqlite`. Copy it, open a shell-capable agent in the copied root, and let the agent process `INIT.md` before normal work. Bootstrap checks Git and Node.js 26+, installs the repository into ignored `.agent-kb/tool/`, installs the reusable source skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initializes vault-local SQLite through `./kb`, verifies status/path/modes, and removes `INIT.md` only after every check succeeds. `CONTRACT.md` remains the complete in-folder authority when global skills are unavailable; `AGENTS.md` is only a thin host/harness adapter.
 
 The automated template smoke test never clones or installs globally. It copies the scaffold to a disposable directory, supplies this repository as the local tool checkout, and installs the skill only below a temporary `HOME`.
 
