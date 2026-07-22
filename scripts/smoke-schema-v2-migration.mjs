@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { backup, DatabaseSync } from "node:sqlite";
-import { openDb } from "../src/db.ts";
+import { initDb, openDb } from "../src/db.ts";
 import { migrateV1ToV2 } from "../src/migration.ts";
 import { KbStore } from "../src/store.ts";
 
 const root = mkdtempSync(join(tmpdir(), "agent-kb-schema-v2-"));
+process.env.HOME = join(root, "home");
+process.env.AGENT_KB_PATH = join(root, "explicit-unused.sqlite");
+assert.ok(resolve(process.env.AGENT_KB_PATH).startsWith(`${resolve(root)}/`), "disposable DB escaped test root");
+process.chdir(root);
 const cliPath = join(import.meta.dirname, "../src/cli.ts");
 const oldTimestamp = "2026-01-01T00:00:00.000Z";
 
@@ -100,6 +104,7 @@ function rawSnapshot(path) {
 
 
 function runCli(path, args) {
+  assert.ok(resolve(path).startsWith(`${resolve(root)}/`), "CLI database escaped test root");
   return spawnSync(process.execPath, [cliPath, ...args], {
     encoding: "utf8",
     env: { ...process.env, AGENT_KB_PATH: path },
@@ -245,14 +250,15 @@ try {
   const noMetaBefore = rawSnapshot(noMetaPath);
   assert.throws(
     () => openDb(noMetaPath),
-    /application schema objects but no agent-KB metadata/,
+    /no agent-KB schema metadata/,
   );
   assert.deepEqual(rawSnapshot(noMetaPath), noMetaBefore, "no-meta refusal mutated foreign schema or content");
 
   const newPath = join(root, "new-v2.sqlite");
-  const newDb = openDb(newPath);
-  assert.equal(newDb.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "2");
-  newDb.close();
+  const initialized = initDb(newPath, "22222222-2222-4222-8222-222222222222");
+  assert.equal(initialized.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "2");
+  assert.equal(initialized.db.prepare("SELECT value FROM meta WHERE key='authority_domain_id'").get().value, "22222222-2222-4222-8222-222222222222");
+  initialized.db.close();
 
   result = {
     ok: true,
@@ -267,6 +273,7 @@ try {
     quick_check: applied.quick_check,
   };
 } finally {
+  process.chdir(tmpdir());
   rmSync(root, { recursive: true, force: true });
 }
 assert.equal(existsSync(root), false, "migration smoke cleanup failed");

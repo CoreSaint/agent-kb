@@ -13,7 +13,9 @@
     "smoke:maintenance": "node ./scripts/smoke-maintenance.mjs",
     "smoke:eval": "node ./scripts/eval-search.mjs",
     "smoke:diagnostics": "node ./scripts/smoke-search-diagnostics.mjs",
-    "smoke:migration": "node ./scripts/smoke-schema-v2-migration.mjs"
+    "smoke:migration": "node ./scripts/smoke-schema-v2-migration.mjs",
+    "test:contract": "node ./scripts/test-cli-contract.mjs",
+    "test:vault-discovery": "node ./scripts/test-vault-discovery.mjs"
   },
   "engines": {
     "node": ">=26"

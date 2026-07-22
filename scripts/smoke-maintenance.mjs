@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { backup as sqliteBackup, DatabaseSync } from "node:sqlite";
 
@@ -9,8 +9,11 @@ const root = mkdtempSync(join(tmpdir(), "agent-kb-maintenance-"));
 const databasePath = join(root, "kb.sqlite");
 const cliPath = join(import.meta.dirname, "../src/cli.ts");
 process.env.AGENT_KB_PATH = databasePath;
-const { createStore } = await import("../src/store.ts");
-const store = createStore();
+process.env.HOME = join(root, "home");
+assert.ok(resolve(process.env.AGENT_KB_PATH).startsWith(`${resolve(root)}/`), "disposable DB escaped test root");
+process.chdir(root);
+const { initializeStore } = await import("../src/store.ts");
+const store = initializeStore();
 
 const old30 = "2026-05-01T00:00:00.000Z";
 const old90 = "2026-01-01T00:00:00.000Z";
@@ -248,5 +251,6 @@ try {
   }, null, 2));
 } finally {
   store.dispose();
+  process.chdir(tmpdir());
   rmSync(root, { recursive: true, force: true });
 }

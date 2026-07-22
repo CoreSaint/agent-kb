@@ -8,7 +8,7 @@ Create a local typed SQLite knowledge base with CLI and a Pi coding-agent extens
 
 - Language: TypeScript or plain Node ESM/CJS that runs on Node 26+
 - DB: `node:sqlite` (built-in). No better-sqlite3 unless necessary.
-- Default DB path: `~/.local/share/agent-kb/kb.sqlite` (env `AGENT_KB_PATH` overrides)
+- DB path precedence: explicit `AGENT_KB_PATH`; otherwise the nearest physical cwd ancestor containing regular `CONTRACT.md` and `MAP.md` files uses `.agent-kb/kb.sqlite`; otherwise compatibility fallback `~/.local/share/agent-kb/kb.sqlite`
 - No embeddings, no repo ingest, no network, no Hindsight API
 - Do not commit/push unless asked
 - Do not store secrets; reject obvious secret patterns on upsert
@@ -91,27 +91,39 @@ Schema version is 2. New databases bootstrap directly at v2. Existing schema-v1 
   - if type is durable and record is new: either force type=proposal OR require `allowDurable: true` / CLI `--durable` only when promoting path
   - **Recommended v1:** `upsert` allows handoff + proposal always; durable types only if id already exists with that durable type (update) OR flag `forceDurable` for user CLI; agent tools use promote for new durable
 - `promote(id, { type, title?, body?, summary?, project?, tags?, confidence? })`:
-  - source record should be proposal (or allow promote-from-handoff findings only if explicit)
-  - creates/updates durable record; mark proposal status `promoted`; set/preserve only `promoted_from`; set source `agent_promoted` or keep user; set last_verified_at optional
+  - source record must be a proposal (or a handoff only through the explicit internal option)
+  - starts `BEGIN IMMEDIATE`, rejects an existing durable ID or already-promoted proposal, creates the durable record with `promoted_from`, and marks the proposal `promoted` in one transaction
+  - rolls back both writes on any error; concurrent attempts yield one success and one conflict
 - `close(id, status?)` for handoffs
 - `supersede(oldId, newId)` rejects self-reference, sets the old record's lifecycle status and `superseded_by`, and preserves `promoted_from`
 
 ## CLI (`kb`)
 
+`kb init` is the only path that creates directories, a database, schema, or authority metadata. All ordinary commands open an existing schema-v2 database and fail closed if it is absent. `kb migrate` requires an existing schema-v1 database. `help`, `version`, `contract`, and `path` do not attach to SQLite.
+
+Vault discovery resolves symlinks to the physical cwd before walking upward. It is read-only. Explicit init may create the discovered vault's `.agent-kb` directory privately, but must not chmod or otherwise mutate the pre-existing vault root.
+
 ```text
-kb init
-kb migrate [--apply]
-kb search <query> [--type t] [--status s] [--project p] [--limit n]
-kb get <id>
-kb upsert --id --type --title [--status] [--project] [--tags a,b] [--summary] [--body-file f] [--body] [--confidence] [--evidence e1,e2] [--source]
-kb promote <proposalId> --type decision|... [--id newId] [--title] ...
-kb close <id> [--status closed|archived]
-kb supersede <oldId> <newId>
-kb purge-candidates [--stale-days 14]
-kb path   # print db path
+kb init [--authority-domain UUID] [--json]
+kb migrate [--apply] [--json]
+kb version [--json]
+kb contract [--json]
+kb search <query> [--type t] [--status s] [--project p] [--limit n] [--json]
+kb get <id> [--json]
+kb upsert --input <file|-> [--json]
+kb promote <proposalId> --input <file|-> [--json]
+kb close <id> [--status closed|archived] [--json]
+kb supersede <oldId> <newId> [--json]
+kb purge-candidates [--stale-days 14] [--json]
+kb status [--json]
+kb path [--json]
 ```
 
-Exit non-zero on validation errors. Print JSON for machine use (`--json` flag default true for tools) and optional human table.
+Contract version `1` machine mode is explicitly requested with `--json`. It emits exactly one success or error envelope on stdout, leaves stderr empty, and exits `0` on success, `2` on stable contract errors, or `1` on internal failure. Stable error codes distinguish uninitialized database, authority mismatch, not found, invalid input/command, schema mismatch/migration required, conflict, and internal failure.
+
+Init writes `meta.authority_domain_id`. Public adapters set `AGENT_KB_EXPECTED_DOMAIN`; mismatch or a bound adapter attaching to a legacy unbound database fails closed. Existing in-process callers may open an existing unbound schema-v2 database when no expected domain is configured.
+
+Structured upsert/promote input rejects unknown fields, keeps tags/evidence as JSON arrays, and defaults omitted upsert provenance to `agent`. Legacy interactive flags remain available. Promotion never uses general upsert semantics to replace an existing durable ID.
 
 ## Pi extension tools
 
@@ -148,21 +160,26 @@ Path: `~/.pi/agent/skills/kb-recall/SKILL.md`
 - Do not default Hindsight pointer retains
 - Point at transition procedure path in personal vault
 
-## Acceptance checks (must pass)
+## Acceptance checks
+
+Every executable check uses disposable cwd, HOME, and database paths. `scripts/test-cli-contract.mjs` sets `umask 077`, asserts its resolved database remains below its temporary root, and removes the root afterward. `scripts/test-vault-discovery.mjs` exercises root/nested/symlink discovery, override precedence, legacy fallback, no-create reads, and vault-root permission preservation entirely below its temporary root.
 
 ```bash
-export AGENT_KB_PATH=/tmp/agent-kb-smoke.sqlite
-rm -f "$AGENT_KB_PATH"
-node ... kb init   # or ./bin/kb init
-# upsert handoff
-# search finds it
-# upsert proposal + promote to decision
-# get decision
-# close handoff
-# purge-candidates runs
+TEST_ROOT="$(mktemp -d)"
+chmod 700 "$TEST_ROOT"
+export HOME="$TEST_ROOT/home"
+export AGENT_KB_PATH="$TEST_ROOT/kb.sqlite"
+test "${AGENT_KB_PATH#"$TEST_ROOT"/}" != "$AGENT_KB_PATH"
+npm run test:contract
+npm run test:vault-discovery
+npm run smoke:search
+npm run smoke:toon
+npm run smoke:maintenance
+npm run smoke:eval
+npm run smoke:diagnostics
+npm run smoke:migration
+node --check src/cli.ts
 ```
-
-Also verify extension file exists and parses (tsc or node import).
 
 ## Out of scope
 

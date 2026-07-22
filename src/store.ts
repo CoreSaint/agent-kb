@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { chmodSync, closeSync, lstatSync, openSync, statSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
-import { openDb, kbPath } from "./db.ts";
+import { initDb, kbPath, openDb, readAuthorityDomain } from "./db.ts";
+import { KbError } from "./errors.ts";
 import { assertNoObviousSecrets } from "./secrets.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
 import {
@@ -413,7 +414,9 @@ export class KbStore {
   }
   path(): string { return this.dbPath; }
   dispose(): void { this.db.close(); }
-  init(): { path: string; schemaVersion: number } { return { path: this.path(), schemaVersion: SCHEMA_VERSION }; }
+  init(): { path: string; schemaVersion: number; authorityDomainId: string | null } {
+    return { path: this.path(), schemaVersion: SCHEMA_VERSION, authorityDomainId: readAuthorityDomain(this.db) };
+  }
 
   get(id: string): KbRecord | null {
     const row = this.db.prepare("SELECT * FROM records WHERE id = ?").get(id);
@@ -460,22 +463,36 @@ export class KbStore {
   }
 
   promote(sourceId: string, input: PromoteInput, opts: { allowHandoff?: boolean } = {}): KbRecord {
-    const src = this.get(sourceId);
-    if (!src) throw new Error(`Source record not found: ${sourceId}.`);
-    if (src.type !== "proposal" && !(opts.allowHandoff && src.type === "handoff")) throw new Error("Promote source must be a proposal unless allowHandoff is explicit.");
-    assertDurable(input.type);
-    const status = input.status ?? (input.type === "troubleshoot" && src.status === "closed" ? "done" : "active");
-    assertStatus(input.type, status);
-    const title = input.title ?? src.title;
-    const id = input.id ?? `${input.type}:${slug(title)}`;
-    const durable = this.upsert({
-      id, type: input.type, title, status, project: input.project !== undefined ? input.project : src.project,
-      tags: input.tags ?? src.tags, body: input.body ?? src.body, summary: input.summary ?? src.summary,
-      confidence: input.confidence ?? src.confidence, evidence: input.evidence ?? src.evidence,
-      promoted_from: sourceId, last_verified_at: input.last_verified_at ?? null, source: src.source === "user" ? "user" : "agent_promoted",
-    }, { forceDurable: true });
-    if (src.type === "proposal") this.upsert({ ...src, status: "promoted" }, { forceDurable: false });
-    return durable;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const src = this.get(sourceId);
+      if (!src) throw new KbError("NOT_FOUND", `Source record not found: ${sourceId}.`);
+      if (src.type !== "proposal" && !(opts.allowHandoff && src.type === "handoff")) {
+        throw new KbError("INVALID_INPUT", "Promote source must be a proposal unless allowHandoff is explicit.");
+      }
+      if (src.type === "proposal" && src.status === "promoted") {
+        throw new KbError("CONFLICT", `Proposal ${sourceId} is already promoted.`);
+      }
+      assertDurable(input.type);
+      const status = input.status ?? (input.type === "troubleshoot" && src.status === "closed" ? "done" : "active");
+      assertStatus(input.type, status);
+      const title = input.title ?? src.title;
+      const id = input.id ?? `${input.type}:${slug(title)}`;
+      if (this.get(id)) throw new KbError("CONFLICT", `Durable record already exists: ${id}.`);
+      const durable = this.upsert({
+        id, type: input.type, title, status, project: input.project !== undefined ? input.project : src.project,
+        tags: input.tags ?? src.tags, body: input.body ?? src.body, summary: input.summary ?? src.summary,
+        confidence: input.confidence ?? src.confidence, evidence: input.evidence ?? src.evidence,
+        promoted_from: sourceId, last_verified_at: input.last_verified_at ?? null,
+        source: src.source === "user" ? "user" : "agent_promoted",
+      }, { forceDurable: true });
+      if (src.type === "proposal") this.upsert({ ...src, status: "promoted" }, { forceDurable: false });
+      this.db.exec("COMMIT");
+      return durable;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close(id: string, status = "closed"): KbRecord {
@@ -895,15 +912,30 @@ export class KbStore {
     return this.db.prepare(`SELECT * FROM records WHERE status IN ('closed','archived','rejected','promoted','deprecated','superseded') OR (type='handoff' AND updated_at < @cutoff) ORDER BY updated_at ASC LIMIT 100`).all({ cutoff }).map(rowToRecord);
   }
 
-  status(): { path: string; counts: Array<{ type: string; status: string; count: number }> } {
+  status(): {
+    path: string;
+    schemaVersion: number;
+    authorityDomainId: string | null;
+    counts: Array<{ type: string; status: string; count: number }>;
+  } {
     const counts = this.db.prepare(
       "SELECT type,status,COUNT(*) AS count FROM records GROUP BY type,status ORDER BY type,status",
     ).all().map((value) => {
       const row = objectRow(value);
       return { type: stringField(row, "type"), status: stringField(row, "status"), count: Number(row.count) };
     });
-    return { path: this.path(), counts };
+    return {
+      path: this.path(),
+      schemaVersion: SCHEMA_VERSION,
+      authorityDomainId: readAuthorityDomain(this.db),
+      counts,
+    };
   }
 }
 
 export function createStore(): KbStore { return new KbStore(); }
+export function initializeStore(domain?: string): KbStore {
+  const path = kbPath();
+  const { db } = initDb(path, domain);
+  return new KbStore(db, path);
+}

@@ -4,13 +4,16 @@
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 const directory = mkdtempSync(join(tmpdir(), "agent-kb-diagnostics-"));
 const databasePath = join(directory, "test.sqlite");
 process.env.AGENT_KB_PATH = databasePath;
+process.env.HOME = join(directory, "home");
+if (!resolve(process.env.AGENT_KB_PATH).startsWith(`${resolve(directory)}/`)) throw new Error("Disposable DB escaped test root.");
+process.chdir(directory);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -28,8 +31,8 @@ function runCli(arguments_) {
 let store;
 let report;
 try {
-  const { createStore } = await import(pathToFileURL(join(import.meta.dirname, "../src/store.ts")).href);
-  store = createStore();
+  const { initializeStore } = await import(pathToFileURL(join(import.meta.dirname, "../src/store.ts")).href)
+  store = initializeStore();
   store.init();
 
   const seed = [
@@ -166,8 +169,10 @@ try {
   assert(toon.startsWith("hits["), "default CLI search must remain TOON");
   assert(!toon.includes("raw_rrf_score") && !toon.includes("body") && !toon.includes("evidence"), "default TOON must not contain diagnostics or full content");
 
-  const fullJson = JSON.parse(runCli(["search", twinQuery, "--project", "ranking-lab", "--json"]));
-  assert(Array.isArray(fullJson) && typeof fullJson[0]?.body === "string" && Array.isArray(fullJson[0]?.evidence), "--json must retain the existing full-record contract");
+  const fullJsonEnvelope = JSON.parse(runCli(["search", twinQuery, "--project", "ranking-lab", "--json"]));
+  const fullJson = fullJsonEnvelope.data;
+  assert(fullJsonEnvelope.ok === true && fullJsonEnvelope.contract_version === "1", "--json must use the versioned envelope");
+  assert(Array.isArray(fullJson) && typeof fullJson[0]?.body === "string" && Array.isArray(fullJson[0]?.evidence), "--json data must retain full records");
   assert(fullJson[0].raw_rrf_score === undefined, "--json must not add diagnostics");
 
   const explain = JSON.parse(runCli(["search", twinQuery, "--project", "ranking-lab", "--explain"]));
@@ -191,6 +196,7 @@ try {
   };
 } finally {
   if (store) store.dispose();
+  process.chdir(tmpdir());
   rmSync(directory, { recursive: true, force: true });
 }
 report.temporary_database_cleaned = true;

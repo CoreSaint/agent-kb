@@ -5,7 +5,7 @@
  */
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 
@@ -167,6 +167,9 @@ function meanReciprocalRank(caseDefinitions, caseResults) {
 const tempDirectory = mkdtempSync(join(tmpdir(), "agent-kb-eval-"));
 const dbPath = join(tempDirectory, "evaluation.sqlite");
 process.env.AGENT_KB_PATH = dbPath;
+process.env.HOME = join(tempDirectory, "home");
+if (!resolve(process.env.AGENT_KB_PATH).startsWith(`${resolve(tempDirectory)}/`)) throw new Error("Disposable DB escaped test root.");
+process.chdir(tempDirectory);
 let store;
 let report;
 
@@ -181,8 +184,8 @@ try {
     };
   }
 
-  const { createStore } = await import(pathToFileURL(join(import.meta.dirname, "../src/store.ts")).href);
-  store = createStore();
+  const { initializeStore } = await import(pathToFileURL(join(import.meta.dirname, "../src/store.ts")).href)
+  store = initializeStore();
   store.init();
   for (const record of fixture.records) store.upsert(record, { forceDurable: true });
 
@@ -222,6 +225,7 @@ try {
   };
 } finally {
   if (store) store.dispose();
+  process.chdir(tmpdir());
   rmSync(tempDirectory, { recursive: true, force: true });
   report.temporary_database.cleaned_up = true;
 }

@@ -5,16 +5,19 @@
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dir = mkdtempSync(join(tmpdir(), "agent-kb-hybrid-"));
 const dbPath = join(dir, "test.sqlite");
 process.env.AGENT_KB_PATH = dbPath;
+process.env.HOME = join(dir, "home");
+if (!resolve(process.env.AGENT_KB_PATH).startsWith(`${resolve(dir)}/`)) throw new Error("Disposable DB escaped test root.");
+process.chdir(dir);
 
-const { createStore } = await import(pathToFileURL(join(import.meta.dirname, "../src/store.ts")).href);
+const { initializeStore } = await import(pathToFileURL(join(import.meta.dirname, "../src/store.ts")).href);
 
-const store = createStore();
+const store = initializeStore();
 store.init();
 
 const seed = [
@@ -137,5 +140,6 @@ function assert(cond, msg) {
 }
 
 store.dispose();
+process.chdir(tmpdir());
 rmSync(dir, { recursive: true, force: true });
 console.log(JSON.stringify({ ok: true, cases: 7 }, null, 2));

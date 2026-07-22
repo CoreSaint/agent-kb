@@ -23,21 +23,54 @@ Explicit non-goals:
 - no Hindsight capture or mutation;
 - no embeddings, vector retrieval, or active recall yet.
 
-## CLI
+## CLI and database attachment
+
+Only `kb init` creates a parent directory, SQLite file, schema, or authority metadata. Every command that reads or writes records requires an existing initialized database and fails with `DB_NOT_INITIALIZED` instead of creating one. `help`, `version`, `contract`, and `path` do not open the database. Migration also requires an existing schema-v1 database.
 
 ```sh
-export AGENT_KB_PATH=/tmp/agent-kb.sqlite # optional
+export AGENT_KB_PATH=/private/agent-kb/kb.sqlite
 ./bin/kb init
+./bin/kb status
 ./bin/kb upsert --id handoff:demo --type handoff --title "Demo" --summary "Open handoff"
 ./bin/kb search demo --type handoff
 ./bin/kb promote proposal:demo --type decision --id decision:demo
 ```
 
-Default database path is `~/.local/share/agent-kb/kb.sqlite`; `AGENT_KB_PATH` overrides it.
+Database path precedence is deterministic:
 
-- `kb search` defaults to **TOON** compact hits (id, type, status, project, confidence, title, summary) for token-efficient LLM/tool output. Pass `--json` for full records.
-- Other commands still print JSON by default.
+1. A non-empty `AGENT_KB_PATH` is the explicit highest-priority override.
+2. Otherwise, agent-KB resolves the physical process working directory and walks upward to the first directory containing regular files named both `CONTRACT.md` and `MAP.md`. That contract vault uses `<vault>/.agent-kb/kb.sqlite`.
+3. If no contract vault is found, the compatibility fallback remains `~/.local/share/agent-kb/kb.sqlite`.
 
+Physical resolution means a cwd reached through a symlink discovers the vault containing the symlink target, not the directory containing the symlink. Path resolution and ordinary reads never create `.agent-kb` or SQLite files. Explicit init may create `.agent-kb` with mode `0700`, creates the schema-v2 database with mode `0600`, and never changes the contract-vault root's permissions. Init also stores a generated, non-secret authority-domain UUID. Tests may supply a validated UUID with `kb init --authority-domain UUID`; `kb status` returns it without mutation.
+
+Public adapters should bind attachment by setting `AGENT_KB_EXPECTED_DOMAIN` to the UUID returned by init or status. A wrong UUID, or any expected UUID against a legacy unbound schema-v2 database, fails closed with `DOMAIN_MISMATCH`. Existing in-process Pi callers remain compatible: an existing schema-v2 database without authority metadata opens when no expected-domain binding is supplied, and status reports a null domain until it is explicitly reinitialized outside this contract slice.
+
+- `kb search` defaults to **TOON** compact hits (id, type, status, project, confidence, title, summary).
+- Other interactive commands retain readable JSON output.
+- Machine callers pass `--json`; success and error output then follows the versioned contract below.
+
+## Public JSON CLI contract
+
+Protocol version `1` uses one JSON object on stdout and no stderr output in machine mode:
+
+```json
+{"ok":true,"contract_version":"1","command":"status","data":{}}
+{"ok":false,"contract_version":"1","command":"get","error":{"code":"NOT_FOUND","message":"Record not found: missing."}}
+```
+
+Exit `0` means success, `2` means a stable contract error, and `1` means `INTERNAL_FAILURE`. Stable codes are `DB_NOT_INITIALIZED`, `DOMAIN_MISMATCH`, `NOT_FOUND`, `INVALID_INPUT`, `INVALID_COMMAND`, `SCHEMA_MISMATCH`, `MIGRATION_REQUIRED`, `CONFLICT`, and `INTERNAL_FAILURE`. `kb version --json` and `kb contract --json` expose package/protocol details without opening a database.
+
+Machine writes use JSON input from a file or stdin. Unknown fields and invalid types are rejected; arrays remain arrays and need no CSV or shell encoding. JSON upserts default omitted provenance to `source: "agent"` rather than `"user"`.
+
+```sh
+printf '%s\n' '{"id":"proposal:demo","type":"proposal","title":"Demo","tags":["one,two"],"evidence":["local,observation"],"source":"agent"}' \
+  | ./bin/kb upsert --input - --json
+printf '%s\n' '{"id":"decision:demo","type":"decision"}' \
+  | ./bin/kb promote proposal:demo --input - --json
+```
+
+Promotion takes an immediate SQLite write transaction, rejects an existing durable ID, creates exactly one durable lineage record, and marks a proposal promoted atomically. Concurrent promotion attempts produce one success and one `CONFLICT`.
 ## Schema-v1 migration
 
 Normal open, search, and get operations refuse schema-v1 databases; they never migrate implicitly. Set `AGENT_KB_PATH` to the intended database, preview first, inspect every ambiguity, and only then apply:
@@ -72,7 +105,7 @@ $$M(d)=0.05\times\begin{cases}
 
 The final score is $S(d)=L(d)+M(d)+2I_{\mathrm{exact}}(d)$. A non-exact score is in $[-0.05,1.05]`; metadata can resolve a lexical near-tie but cannot reverse a normalized lexical gap greater than $0.1$. The exact-ID bonus separates a permitted exact hit from every non-exact hit. Final ties use ascending record ID. Empty/non-token queries retain `updated_at` recency ordering under the same filters and do not apply score reranking.
 
-Default search rendering remains minimal TOON (id, type, status, project, confidence, title, summary); `--json` retains the existing full-record JSON contract. `kb search <query> --explain` and core `KbStore.searchWithDiagnostics()` return compact JSON diagnostics with the same identity fields plus ranking mode, exact-ID flag, raw RRF, normalized lexical score, four metadata components and their raw/bounded totals, exact-ID bonus, final score, and every contributing retrieval-list name, weight, rank, and RRF contribution. Explain output intentionally excludes tags, body, evidence, lineage, source, and timestamps. The Pi `kb_search` tool exposes the same bounded contract only when `explain: true`; its default TOON output is unchanged.
+Default search rendering remains minimal TOON (id, type, status, project, confidence, title, summary); `--json` returns the full-record array inside the version-1 success envelope. `kb search <query> --explain` and core `KbStore.searchWithDiagnostics()` return compact JSON diagnostics with the same identity fields plus ranking mode, exact-ID flag, raw RRF, normalized lexical score, four metadata components and their raw/bounded totals, exact-ID bonus, final score, and every contributing retrieval-list name, weight, rank, and RRF contribution. Explain output intentionally excludes tags, body, evidence, lineage, source, and timestamps. The Pi `kb_search` tool exposes the same bounded contract only when `explain: true`; its default TOON output is unchanged.
 
 ## Retrieval evaluation
 
@@ -118,12 +151,18 @@ Maintenance commands return metadata and IDs, not record bodies:
 
 Open, blocked, active, fresh, unlinked, multiply linked, and durable records are never selected automatically. Archival alone never makes an arbitrary proposal eligible: an archived proposal still needs exactly one durable record linked through the promotion relationship, and `archive` resets its 30-day retention clock through `updated_at`. Apply mode requires `--backup` naming a private, valid backup created by `kb backup` for the same database within the last 15 minutes. The backup must still match current record metadata, so create it after all intended lifecycle changes and immediately before applying. Deletion runs in one transaction; foreign-key, FTS-trigger behavior, and `quick_check` are verified by the maintenance smoke script.
 
-Run all checks only against disposable databases:
+Run checks only with an explicit temporary HOME and database path:
 
 ```sh
-AGENT_KB_PATH=/tmp/agent-kb-smoke.sqlite npm run smoke
-AGENT_KB_PATH=/tmp/agent-kb-search.sqlite npm run smoke:search
-AGENT_KB_PATH=/tmp/agent-kb-toon.sqlite npm run smoke:toon
+TEST_ROOT="$(mktemp -d)"
+chmod 700 "$TEST_ROOT"
+export HOME="$TEST_ROOT/home"
+export AGENT_KB_PATH="$TEST_ROOT/kb.sqlite"
+test "${AGENT_KB_PATH#"$TEST_ROOT"/}" != "$AGENT_KB_PATH"
+npm run test:contract
+npm run test:vault-discovery
+npm run smoke:search
+npm run smoke:toon
 npm run smoke:maintenance
 npm run smoke:eval
 npm run smoke:diagnostics

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
 import { durableTypes, type LegacyLineageAmbiguity, type MigrationReport } from "./types.ts";
@@ -144,6 +145,7 @@ function buildReport(
 
 export function migrateV1ToV2(path: string, apply: boolean): MigrationReport {
   if (!path.trim() || path.includes("\0")) throw new Error("Migration path must be a non-empty filesystem path.");
+  if (!existsSync(path)) throw new Error(`Agent-KB is not initialized at ${resolve(path)}; migration will not create it.`);
   const db = new DatabaseSync(path, { readOnly: !apply });
   try {
     const version = schemaVersion(db);

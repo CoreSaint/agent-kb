@@ -3,7 +3,19 @@
  * Smoke test for TOON hit rendering (search tool output).
  */
 import { pathToFileURL } from "node:url";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+
+const dir = mkdtempSync(join(tmpdir(), "agent-kb-toon-"));
+const dbPath = join(dir, "t.sqlite");
+process.env.HOME = join(dir, "home");
+process.env.AGENT_KB_PATH = dbPath;
+if (!resolve(process.env.AGENT_KB_PATH).startsWith(`${resolve(dir)}/`)) throw new Error("Disposable DB escaped test root.");
+process.chdir(dir);
+const kb = join(import.meta.dirname, "../bin/kb");
+const env = { ...process.env };
 
 const { formatHitsToon, toonCell, HIT_FIELDS } = await import(
   pathToFileURL(join(import.meta.dirname, "../src/format.ts")).href
@@ -80,14 +92,6 @@ assert(!toon.includes("https://example.com"), "evidence omitted");
 assert(toon.includes("decision:demo") && toon.includes(",,"), "null project empty cell");
 
 // CLI path: default TOON, --json full
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
-
-const dir = mkdtempSync(join(tmpdir(), "agent-kb-toon-"));
-const dbPath = join(dir, "t.sqlite");
-const kb = join(import.meta.dirname, "../bin/kb");
-const env = { ...process.env, AGENT_KB_PATH: dbPath };
 
 function kbRun(args) {
   return spawnSync(kb, args, { env, encoding: "utf8" });
@@ -115,9 +119,11 @@ assert(!search.stdout.trimStart().startsWith("["), "cli search not JSON array");
 
 const searchJson = kbRun(["search", "toon", "--type", "handoff", "--json"]);
 assert(searchJson.status === 0, "cli search --json exit 0");
-assert(searchJson.stdout.trimStart().startsWith("["), "cli search --json is JSON");
-assert(searchJson.stdout.includes("compact hits"), "cli search --json has summary");
+const searchEnvelope = JSON.parse(searchJson.stdout);
+assert(searchEnvelope.ok === true && searchEnvelope.contract_version === "1", "cli search --json envelope");
+assert(searchEnvelope.data[0].summary === "compact hits", "cli search --json has summary");
 
+process.chdir(tmpdir());
 rmSync(dir, { recursive: true, force: true });
 
 if (failed) {
