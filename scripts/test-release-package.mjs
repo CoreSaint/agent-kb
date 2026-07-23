@@ -32,6 +32,7 @@ const destination = join(root, "installed-vault");
 const conflictDestination = join(root, "conflict-vault");
 const existingDestination = join(root, "existing-vault");
 const noHomeDestination = join(root, "no-home-vault");
+const unsupportedHostDestination = join(root, "unsupported-host-vault");
 const badSkillHome = join(root, "bad-skill-home");
 const badSkillDestination = join(root, "bad-skill-vault");
 const danglingDestination = join(root, "dangling-destination");
@@ -91,6 +92,10 @@ let report;
 try {
   mkdirSync(home, { mode: 0o700 });
   mkdirSync(extractRoot, { mode: 0o700 });
+  const fakeBin = join(root, "fake-bin");
+  mkdirSync(fakeBin, { mode: 0o700 });
+  const fakeUname = join(fakeBin, "uname");
+  writeFileSync(fakeUname, "#!/bin/sh\nprintf '%s\\n' Darwin\n", { mode: 0o700 });
 
   mkdirSync(join(repository, "release"), { recursive: true });
   writeFileSync(archivePath, "previous-good-archive\n", { mode: 0o600 });
@@ -151,6 +156,11 @@ try {
   const noHome = run(join(releaseRoot, "install.sh"), [noHomeDestination], { env: noHomeEnv });
   assert.notEqual(noHome.status, 0, "installer accepted missing HOME");
   assert.match(noHome.stderr, /HOME is required/);
+
+  const unsupportedHost = run(join(releaseRoot, "install.sh"), [unsupportedHostDestination], { env: { ...environment, PATH: `${fakeBin}:${environment.PATH}` } });
+  assert.notEqual(unsupportedHost.status, 0, "installer accepted an unsupported host");
+  assert.match(unsupportedHost.stderr, /unsupported host operating system: Darwin; Linux is required/);
+  assert.equal(existsSync(unsupportedHostDestination), false, "unsupported host created destination");
   assert.equal(existsSync(noHomeDestination), false, "missing HOME created destination");
 
   symlinkSync(join(root, "missing-destination-target"), danglingDestination);

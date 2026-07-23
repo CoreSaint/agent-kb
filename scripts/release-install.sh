@@ -23,6 +23,14 @@ if [ -e "$destination" ] || [ -L "$destination" ]; then
   echo "destination already exists: $destination" >&2
   exit 1
 fi
+host_os=$(uname -s 2>/dev/null) || {
+  echo "unable to determine host operating system; Linux is required" >&2
+  exit 1
+}
+if [ "$host_os" != Linux ]; then
+  echo "unsupported host operating system: $host_os; Linux is required" >&2
+  exit 1
+fi
 
 node -e 'const major = Number(process.versions.node.split(".")[0]); if (!Number.isInteger(major) || major < 26) { console.error(`Node.js 26 or newer is required; found ${process.versions.node}`); process.exit(1); }'
 

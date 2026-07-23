@@ -21,6 +21,7 @@ const repository = resolve(import.meta.dirname, "..");
 const pkg = JSON.parse(readFileSync(join(repository, "package.json"), "utf8"));
 assert.equal(typeof pkg.name, "string", "package.json name must be a string");
 assert.equal(typeof pkg.version, "string", "package.json version must be a string");
+assert.equal(process.platform, "linux", `Linux is required to build the V1 release archive; found ${process.platform}`);
 
 const host = `${process.platform}-${process.arch}`;
 const releaseName = `${pkg.name}-${pkg.version}-${host}`;

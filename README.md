@@ -2,15 +2,23 @@
 
 Local typed SQLite knowledge base for agent handoffs, proposals, and promoted durable knowledge.
 
+## Install with an agent from the repository URL
+
+Give a shell-capable coding agent this repository URL and an explicit new destination on a Linux host:
+
+> Install the portable agent-memory vault from `https://github.com/CoreSaint/agent-kb` into `<destination>`. Follow `INSTALL.md`; do not use sudo or overwrite existing files.
+
+[INSTALL.md](INSTALL.md) is the authoritative first-copy bootstrap for the Linux-only fresh-vault V1 preview. For repository-URL installs, the agent clones the repository into a private temporary directory, builds the ignored host-native Linux release archive with `npm run build:release`, extracts it, invokes the packaged `install.sh`, verifies the vault-local database and reusable skill, then removes temporary source/build files after success. Do not initialize the repository's source `vault/` directory in place.
+
 ## Install from a release archive
 
-Give a shell-capable coding agent a downloaded `agent-kb-<version>-<platform>-<arch>.tar.gz` release archive and say:
+For offline or reproducible installs on Linux, give the agent a downloaded `agent-kb-<version>-linux-<arch>.tar.gz` release archive and say:
 
 > Install the portable agent-memory vault from this archive into `<destination>`. Follow `INSTALL.md`; do not use sudo, contact the network, or overwrite existing files.
 
-[INSTALL.md](INSTALL.md) is the authoritative first-copy bootstrap. The release archive provides one entry point, `install.sh`, that copies the `vault/` scaffold, installs the packaged tool into ignored `<destination>/.agent-kb/tool`, installs or validates the reusable skill, initializes the vault-local SQLite database, verifies paths and modes, and reports the installed paths/version. Do not initialize the repository's source `vault/` directory in place.
+The release archive provides the same single entry point, `install.sh`, that copies the `vault/` scaffold, installs the packaged tool into ignored `<destination>/.agent-kb/tool`, installs or validates the reusable skill, initializes the vault-local SQLite database, verifies paths and modes, and reports the installed paths/version.
 
-Maintainers build the ignored host-native release artifact with `npm run build:release`; `npm run test:release-package` verifies archive contents and a real extracted install using a disposable `HOME`.
+Maintainers build the ignored host-native Linux release artifact with `npm run build:release`; the build and installer reject non-Linux hosts. `npm run test:release-package` verifies archive contents and a real extracted install using a disposable `HOME`. `npm run test:repository-install` verifies the repository-URL workflow using a local synthetic Git source with no network.
 
 ## Memory architecture and authority
 
@@ -35,7 +43,7 @@ Explicit non-goals:
 
 ## Copyable vault template
 
-`vault/` is the minimal agent-agnostic deployable scaffold; the folder name does not rename the `kb` CLI or `.agent-kb/kb.sqlite`. Copy it, open a shell-capable agent in the copied root, and let the agent process `INIT.md` before normal work. Bootstrap checks Git and Node.js 26+, installs the repository into ignored `.agent-kb/tool/`, installs the reusable source skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initializes vault-local SQLite through `./kb`, verifies status/path/modes, and removes `INIT.md` only after every check succeeds. `CONTRACT.md` remains the complete in-folder authority when global skills are unavailable; `AGENTS.md` is only a thin host/harness adapter.
+`vault/` is the minimal agent-agnostic deployable scaffold; the folder name does not rename the `kb` CLI or `.agent-kb/kb.sqlite`. Release installation supplies the local tool under `.agent-kb/tool/`, installs the reusable source skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initializes vault-local SQLite through `./kb`, verifies status/path/modes, and removes `INIT.md` only after every check succeeds. `CONTRACT.md` remains the complete in-folder authority when global skills are unavailable; `AGENTS.md` is only a thin host/harness adapter.
 
 The automated template smoke test never clones or installs globally. It copies the scaffold to a disposable directory, supplies this repository as the local tool checkout, and installs the skill only below a temporary `HOME`.
 

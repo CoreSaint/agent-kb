@@ -18,7 +18,8 @@
     "test:vault-discovery": "node ./scripts/test-vault-discovery.mjs",
     "smoke:vault-template": "node ./scripts/smoke-vault-template.mjs",
     "build:release": "node ./scripts/build-release.mjs",
-    "test:release-package": "node ./scripts/test-release-package.mjs"
+    "test:release-package": "node ./scripts/test-release-package.mjs",
+    "test:repository-install": "node ./scripts/test-repository-url-install.mjs"
   },
   "engines": {
     "node": ">=26"
