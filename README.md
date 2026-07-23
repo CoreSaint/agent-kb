@@ -2,13 +2,15 @@
 
 Local typed SQLite knowledge base for agent handoffs, proposals, and promoted durable knowledge.
 
-## Install with an agent
+## Install from a release archive
 
-Give a shell-capable coding agent this repository URL and say:
+Give a shell-capable coding agent a downloaded `agent-kb-<version>-<platform>-<arch>.tar.gz` release archive and say:
 
-> Install the portable agent-memory vault from https://github.com/CoreSaint/agent-kb into `<destination>`. Follow `INSTALL.md`; do not use sudo or overwrite existing files.
+> Install the portable agent-memory vault from this archive into `<destination>`. Follow `INSTALL.md`; do not use sudo, contact the network, or overwrite existing files.
 
-[INSTALL.md](INSTALL.md) is the authoritative first-copy bootstrap. It safely copies the `vault/` template, reuses the checkout as the private local tool, and then hands control to the copied vault's `INIT.md`. Do not initialize the repository's source `vault/` directory in place.
+[INSTALL.md](INSTALL.md) is the authoritative first-copy bootstrap. The release archive provides one entry point, `install.sh`, that copies the `vault/` scaffold, installs the packaged tool into ignored `<destination>/.agent-kb/tool`, installs or validates the reusable skill, initializes the vault-local SQLite database, verifies paths and modes, and reports the installed paths/version. Do not initialize the repository's source `vault/` directory in place.
+
+Maintainers build the ignored host-native release artifact with `npm run build:release`; `npm run test:release-package` verifies archive contents and a real extracted install using a disposable `HOME`.
 
 ## Memory architecture and authority
 

@@ -16,7 +16,9 @@
     "smoke:migration": "node ./scripts/smoke-schema-v2-migration.mjs",
     "test:contract": "node ./scripts/test-cli-contract.mjs",
     "test:vault-discovery": "node ./scripts/test-vault-discovery.mjs",
-    "smoke:vault-template": "node ./scripts/smoke-vault-template.mjs"
+    "smoke:vault-template": "node ./scripts/smoke-vault-template.mjs",
+    "build:release": "node ./scripts/build-release.mjs",
+    "test:release-package": "node ./scripts/test-release-package.mjs"
   },
   "engines": {
     "node": ">=26"

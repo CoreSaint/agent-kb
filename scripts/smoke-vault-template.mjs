@@ -67,10 +67,11 @@ try {
   assert.match(rootReadme, /Do not initialize the repository's source `vault\/` directory in place/i);
   assert.match(rootInstall, /Obtain an explicit destination from the user/i);
   assert.match(rootInstall, /destination must not already exist/i);
-  assert.match(rootInstall, /https:\/\/github\.com\/CoreSaint\/agent-kb\.git/);
-  assert.match(rootInstall, /cp -a .*agent-kb\/vault.*destination/);
+  assert.match(rootInstall, /npm run build:release/);
+  assert.match(rootInstall, /agent-kb-<version>-<platform>-<arch>\.tar\.gz/);
+  assert.match(rootInstall, /install\.sh "\$destination"/);
   assert.match(rootInstall, /\.agent-kb\/tool/);
-  assert.match(rootInstall, /Process `INIT\.md` completely/i);
+  assert.match(rootInstall, /Release installer performs those checks automatically/i);
   assert.match(rootInstall, /Do not initialize the repository's source `vault\/` directory in place/i);
   assert.match(rootAgents, /read and follow \[INSTALL\.md\]\(INSTALL\.md\)/i);
   assert.match(rootAgents, /never initialize the repository's source `vault\/` directory in place/i);
@@ -101,7 +102,7 @@ try {
 
   const instructions = readFileSync(join(copy, "INIT.md"), "utf8");
   assert.match(instructions, /Node\.js must be 26 or newer/);
-  assert.match(instructions, /https:\/\/github\.com\/CoreSaint\/agent-kb\.git/);
+  assert.match(instructions, /Release `install\.sh` normally supplies `\.agent-kb\/tool`/);
   assert.match(instructions, /\.agent-kb\/tool\/bin\/kb/);
   assert.match(instructions, /\.agent-kb\/kb\.sqlite/);
   assert.match(instructions, /Remove it only after all checks succeed/);

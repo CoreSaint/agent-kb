@@ -3,18 +3,15 @@
 Complete every step before normal work. Keep this file if any step fails and report the exact blocker. Remove it only after all checks succeed.
 
 1. Work from this directory. Confirm `CONTRACT.md`, `MAP.md`, `AGENTS.md`, and `kb` are present.
-2. Check `git --version` and Node.js major version with `node -p "process.versions.node"`. Node.js must be 26 or newer.
-   - If Git or Node.js is missing, you may use host-appropriate **user-space** tooling.
+2. Check Node.js major version with `node -p "process.versions.node"`. Node.js must be 26 or newer.
+   - If Node.js is missing, you may use host-appropriate **user-space** tooling.
    - Do not use elevation, change credentials, alter global PATH, or make destructive system changes without explicit permission.
-3. Install or verify the local tool:
+3. Install or verify the local tool. Release `install.sh` normally supplies `.agent-kb/tool` before initialization; if it is missing, stop and obtain an explicit local tool checkout or release artifact rather than cloning implicitly.
 
    ```sh
    umask 077
    mkdir -p .agent-kb
    chmod 700 .agent-kb
-   if [ ! -e .agent-kb/tool ]; then
-     git clone https://github.com/CoreSaint/agent-kb.git .agent-kb/tool
-   fi
    test -x .agent-kb/tool/bin/kb
    .agent-kb/tool/bin/kb version --json
    ```
