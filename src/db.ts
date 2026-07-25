@@ -64,8 +64,11 @@ function configure(db: DatabaseSync): void {
 function validateInitialized(db: DatabaseSync): void {
   const version = readSchemaVersion(db);
   if (version === null) throw new KbError("SCHEMA_MISMATCH", "Database has no agent-KB schema metadata.");
-  if (version === 1) {
-    throw new KbError("MIGRATION_REQUIRED", "Agent-KB schema v1 requires explicit migration. Run `kb migrate` to preview, then `kb migrate --apply`.");
+  if (version === 1 || version === 2) {
+    throw new KbError(
+      "MIGRATION_REQUIRED",
+      `Agent-KB schema v${version} requires explicit migration. Run \`kb migrate\` to preview, then \`kb migrate --apply\`.`,
+    );
   }
   if (version !== SCHEMA_VERSION) {
     throw new KbError("SCHEMA_MISMATCH", `Unsupported agent-KB schema version ${version}; expected ${SCHEMA_VERSION}.`);

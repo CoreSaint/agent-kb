@@ -2,6 +2,25 @@ export const recordTypes = ["handoff", "decision", "procedure", "troubleshoot", 
 export const durableTypes = ["decision", "procedure", "troubleshoot", "landscape", "preference"] as const;
 export const confidences = ["high", "medium", "low"] as const;
 export const sources = ["user", "agent_promoted", "import", "agent"] as const;
+export const assertionBases = ["asserted", "inferred"] as const;
+
+export type AssertionBasis = (typeof assertionBases)[number];
+export type SnapshotEvidence = {
+  kind: "snapshot";
+  uri: string;
+  observed_at: string;
+  sha256: string;
+};
+export type LiveEvidence = {
+  kind: "live";
+  uri: string;
+  checked_at?: string;
+};
+export type PointerEvidence = {
+  kind: "pointer";
+  uri: string;
+};
+export type Evidence = SnapshotEvidence | LiveEvidence | PointerEvidence;
 
 export type RecordType = (typeof recordTypes)[number];
 export type DurableType = (typeof durableTypes)[number];
@@ -48,7 +67,7 @@ export interface LineageAmbiguityReport {
   truncated: boolean;
 }
 
-export interface MigrationReport {
+export interface V1ToV2MigrationReport {
   mode: "preview" | "applied";
   path: string;
   from_schema_version: 1;
@@ -67,6 +86,19 @@ export interface MigrationReport {
   promoted_proposal_review_truncated: boolean;
   quick_check: string;
 }
+
+export interface V2ToV3MigrationReport {
+  mode: "preview" | "applied";
+  path: string;
+  from_schema_version: 2;
+  to_schema_version: 3;
+  record_count: number;
+  evidence_item_count: number;
+  wrapped_pointer_count: number;
+  quick_check: string;
+}
+
+export type MigrationReport = V1ToV2MigrationReport | V2ToV3MigrationReport;
 
 export interface MaintenanceReport {
   generated_at: string;
@@ -119,12 +151,17 @@ export interface KbRecord {
   summary: string;
   confidence: Confidence;
   evidence: string[];
+  evidence_items: Evidence[];
   promoted_from: string | null;
   superseded_by: string | null;
   created_at: string;
   updated_at: string;
   last_verified_at: string | null;
   source: Source;
+  assertion_basis: AssertionBasis | null;
+  as_of: string | null;
+  expires_at: string | null;
+  canonical_ids: string[];
 }
 
 export interface SearchFilters {
@@ -181,10 +218,15 @@ export interface UpsertInput {
   summary?: string;
   confidence?: Confidence;
   evidence?: string[];
+  evidence_items?: Evidence[];
   promoted_from?: string | null;
   superseded_by?: string | null;
   last_verified_at?: string | null;
   source?: Source;
+  assertion_basis?: AssertionBasis | null;
+  as_of?: string | null;
+  expires_at?: string | null;
+  canonical_ids?: string[];
 }
 
 export interface PromoteInput {
@@ -198,5 +240,10 @@ export interface PromoteInput {
   summary?: string;
   confidence?: Confidence;
   evidence?: string[];
+  evidence_items?: Evidence[];
   last_verified_at?: string | null;
+  assertion_basis?: AssertionBasis | null;
+  as_of?: string | null;
+  expires_at?: string | null;
+  canonical_ids?: string[];
 }

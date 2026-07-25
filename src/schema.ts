@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const DDL = `
 PRAGMA journal_mode = WAL;
@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS records (
   summary TEXT NOT NULL DEFAULT '',
   confidence TEXT NOT NULL DEFAULT 'medium',
   evidence TEXT NOT NULL DEFAULT '[]',
+  assertion_basis TEXT CHECK (assertion_basis IS NULL OR assertion_basis IN ('asserted', 'inferred')),
+  as_of TEXT,
+  expires_at TEXT,
+  canonical_ids TEXT NOT NULL DEFAULT '[]',
   promoted_from TEXT,
   superseded_by TEXT,
   created_at TEXT NOT NULL,

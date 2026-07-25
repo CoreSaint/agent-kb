@@ -233,7 +233,7 @@ try {
   const statusEnvelope = JSON.parse(status.stdout);
   assert.equal(statusEnvelope.ok, true);
   assert.equal(statusEnvelope.data.path, database);
-  assert.equal(statusEnvelope.data.schemaVersion, 2);
+  assert.equal(statusEnvelope.data.schemaVersion, 3);
   assert.equal(statusEnvelope.data.authorityDomainId, domain);
   assert.equal(statSync(join(copy, ".agent-kb")).mode & 0o777, 0o700);
   assert.equal(statSync(database).mode & 0o777, 0o600);

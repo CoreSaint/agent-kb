@@ -1,15 +1,24 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import {
+  validateAssembleInput,
+  validateAssertionBasis,
+  validateCanonicalIds,
+  validateEvidenceItems,
+  validateTimestamp,
+} from "./assembler.ts";
 import { formatHitsToon } from "./format.ts";
 import { kbPath } from "./db.ts";
 import { asKbError, KbError } from "./errors.ts";
-import { migrateV1ToV2 } from "./migration.ts";
+import { migrateDatabase } from "./migration.ts";
 import { createStore, initializeStore, type KbStore } from "./store.ts";
 import {
   confidences,
   durableTypes,
   recordTypes,
   sources,
+  type AssertionBasis,
+  type Evidence,
   type Confidence,
   type DurableType,
   type KbRecord,
@@ -136,10 +145,11 @@ function inputObject(flags: Flags, allowed: readonly string[]): Record<string, u
 }
 
 function jsonUpsert(flags: Flags): { input: UpsertInput; forceDurable: boolean } {
-  const value = inputObject(flags, ["id", "type", "title", "status", "project", "tags", "body", "summary", "confidence", "evidence", "source", "durable"]);
+  const value = inputObject(flags, ["id", "type", "title", "status", "project", "tags", "body", "summary", "confidence", "evidence", "evidence_items", "assertion_basis", "as_of", "expires_at", "canonical_ids", "source", "durable"]);
   if (typeof value.id !== "string" || !value.id.trim()) throw new KbError("INVALID_INPUT", "id must be a non-empty string.");
   if (typeof value.title !== "string" || !value.title.trim()) throw new KbError("INVALID_INPUT", "title must be a non-empty string.");
   if (value.durable !== undefined && typeof value.durable !== "boolean") throw new KbError("INVALID_INPUT", "durable must be a boolean.");
+  const slice = sliceFields(value);
   return {
     input: {
       id: value.id,
@@ -152,14 +162,46 @@ function jsonUpsert(flags: Flags): { input: UpsertInput; forceDurable: boolean }
       summary: optionalString(value.summary, "summary") as string | undefined,
       confidence: value.confidence === undefined ? undefined : enumValue(confidences, value.confidence, "confidence"),
       evidence: stringArray(value.evidence, "evidence"),
+      evidence_items: slice.evidence_items,
+      assertion_basis: slice.assertion_basis,
+      as_of: slice.as_of,
+      expires_at: slice.expires_at,
+      canonical_ids: slice.canonical_ids,
       source: value.source === undefined ? "agent" : enumValue(sources, value.source, "source"),
     },
     forceDurable: value.durable === true,
   };
 }
 
+function sliceFields(value: Record<string, unknown>): {
+  assertion_basis: AssertionBasis | null | undefined;
+  evidence_items: Evidence[] | undefined;
+  as_of: string | null | undefined;
+  expires_at: string | null | undefined;
+  canonical_ids: string[] | undefined;
+} {
+  if (value.evidence !== undefined && value.evidence_items !== undefined) {
+    throw new KbError("INVALID_INPUT", "Use only one of evidence and evidence_items.");
+  }
+  const asOf = value.as_of === undefined || value.as_of === null ? value.as_of : validateTimestamp(value.as_of, "as_of");
+  const expiresAt = value.expires_at === undefined || value.expires_at === null
+    ? value.expires_at
+    : validateTimestamp(value.expires_at, "expires_at");
+  if (asOf !== undefined && asOf !== null && expiresAt !== undefined && expiresAt !== null && Date.parse(expiresAt) < Date.parse(asOf)) {
+    throw new KbError("INVALID_INPUT", "expires_at must be greater than or equal to as_of.");
+  }
+  return {
+    assertion_basis: value.assertion_basis === undefined ? undefined : validateAssertionBasis(value.assertion_basis),
+    evidence_items: value.evidence_items === undefined ? undefined : validateEvidenceItems(value.evidence_items),
+    as_of: asOf,
+    expires_at: expiresAt,
+    canonical_ids: value.canonical_ids === undefined ? undefined : validateCanonicalIds(value.canonical_ids),
+  };
+}
+
 function jsonPromote(flags: Flags): PromoteInput {
-  const value = inputObject(flags, ["id", "type", "title", "status", "project", "tags", "body", "summary", "confidence", "evidence", "last_verified_at"]);
+  const value = inputObject(flags, ["id", "type", "title", "status", "project", "tags", "body", "summary", "confidence", "evidence", "evidence_items", "assertion_basis", "as_of", "expires_at", "canonical_ids", "last_verified_at"]);
+  const slice = sliceFields(value);
   const status = optionalString(value.status, "status");
   if (status !== undefined && status !== "active" && status !== "done") throw new KbError("INVALID_INPUT", `Invalid promotion status '${status}'.`);
   return {
@@ -173,6 +215,11 @@ function jsonPromote(flags: Flags): PromoteInput {
     summary: optionalString(value.summary, "summary") as string | undefined,
     confidence: value.confidence === undefined ? undefined : enumValue(confidences, value.confidence, "confidence"),
     evidence: stringArray(value.evidence, "evidence"),
+    evidence_items: slice.evidence_items,
+    assertion_basis: slice.assertion_basis,
+    as_of: slice.as_of,
+    expires_at: slice.expires_at,
+    canonical_ids: slice.canonical_ids,
     last_verified_at: optionalString(value.last_verified_at, "last_verified_at", true),
   };
 }
@@ -204,6 +251,7 @@ kb contract [--json]
 kb search <query> [--type t] [--status s] [--project p] [--limit n] [--json | --explain]
 kb get <id> [--json]
 kb upsert --input <file|-> [--json]
+kb assemble --input <file|-> [--json]
 kb promote <proposalId> --input <file|-> [--json]
 kb upsert --id --type --title ... (legacy interactive flags)
 kb promote <proposalId> --type durable-type ... (legacy interactive flags)
@@ -220,8 +268,9 @@ kb status [--json]
 
 Record types: ${recordTypes.join(" | ")}
 Durable promotion types: ${durableTypes.join(" | ")}
-Upsert JSON fields: id, type, title, status, project, tags, body, summary, confidence, evidence, source, durable.
-Promote JSON fields: id, type, title, status, project, tags, body, summary, confidence, evidence, last_verified_at.
+Upsert JSON fields: id, type, title, status, project, tags, body, summary, confidence, evidence, evidence_items, assertion_basis, as_of, expires_at, canonical_ids, source, durable.
+Promote JSON fields: id, type, title, status, project, tags, body, summary, confidence, evidence, evidence_items, assertion_basis, as_of, expires_at, canonical_ids, last_verified_at.
+Assemble JSON fields: query, risk_class, now, canonical_snippets, live_verified_record_ids, limits.
 Promotion and replacement lineage are managed by promote and supersede; they are not accepted as upsert fields.
 
 Only init creates a database. Without AGENT_KB_PATH, the nearest physical cwd ancestor containing CONTRACT.md and MAP.md uses .agent-kb/kb.sqlite; otherwise the legacy home path is used. Set AGENT_KB_EXPECTED_DOMAIN to bind adapter attachment to an initialized authority-domain UUID.`;
@@ -230,7 +279,7 @@ Only init creates a database. Without AGENT_KB_PATH, the nearest physical cwd an
 const contract = {
   contract_version: CONTRACT_VERSION,
   transport: "JSON CLI over stdout",
-  request: "Pass --json for machine envelopes; upsert/promote accept --input <file|->.",
+  request: "Pass --json for machine envelopes; upsert/promote/assemble accept --input <file|->.",
   success: { ok: true, contract_version: "1", command: "<command>", data: "<command result>" },
   error: { ok: false, contract_version: "1", command: "<command>", error: { code: "<stable code>", message: "<message>" } },
   error_codes: ["DB_NOT_INITIALIZED", "DOMAIN_MISMATCH", "NOT_FOUND", "INVALID_INPUT", "INVALID_COMMAND", "SCHEMA_MISMATCH", "MIGRATION_REQUIRED", "CONFLICT", "INTERNAL_FAILURE"],
@@ -261,9 +310,9 @@ try {
     data = store.init();
   } else if (cmd === "migrate") {
     assertFlags(flags, ["apply", "json", "human"]); noArguments(args, cmd);
-    data = migrateV1ToV2(kbPath(), flags.apply === true);
+    data = migrateDatabase(kbPath(), flags.apply === true);
   } else {
-    const known = ["search", "get", "upsert", "promote", "close", "supersede", "purge-candidates", "maintain", "archive", "restore", "verify", "backup", "prune", "status"];
+    const known = ["search", "get", "upsert", "promote", "assemble", "close", "supersede", "purge-candidates", "maintain", "archive", "restore", "verify", "backup", "prune", "status"];
     if (!known.includes(cmd)) throw new KbError("INVALID_COMMAND", `Unknown command '${cmd}'.`);
     store = createStore();
     switch (cmd) {
@@ -277,6 +326,12 @@ try {
           console.log(formatHitsToon(data as KbRecord[]));
           data = undefined;
         }
+        break;
+      }
+      case "assemble": {
+        assertFlags(flags, ["input", "json", "human"]); noArguments(args, cmd);
+        const value = inputObject(flags, ["query", "risk_class", "now", "canonical_snippets", "live_verified_record_ids", "limits"]);
+        data = store.assemble(validateAssembleInput(value));
         break;
       }
       case "get": {

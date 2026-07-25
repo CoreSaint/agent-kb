@@ -1,4 +1,4 @@
-# Implement agent-KB v2
+# Implement agent-KB
 
 ## Goal
 
@@ -20,9 +20,9 @@ Create a local typed SQLite knowledge base, agent-agnostic vault template, and p
   package.json
   README.md
   src/
-    schema.ts       # schema-v2 DDL
-    db.ts           # open DB, bootstrap v2, refuse implicit v1 migration
-    migration.ts    # explicit v1 preview/apply migration
+    schema.ts       # schema-v3 DDL
+    db.ts           # open DB, bootstrap v3, refuse implicit migration
+    migration.ts    # explicit v1→v2 and v2→v3 preview/apply migrations
     types.ts        # record types, statuses
     secrets.ts      # reject heuristics
     store.ts        # CRUD/search/promote/close/supersede
@@ -50,7 +50,11 @@ Table `records`:
 - body TEXT NOT NULL DEFAULT ''
 - summary TEXT NOT NULL DEFAULT ''
 - confidence TEXT NOT NULL DEFAULT 'medium'  -- high|medium|low
-- evidence TEXT NOT NULL DEFAULT '[]'  -- JSON array of strings
+- evidence TEXT NOT NULL DEFAULT '[]'  -- JSON array of snapshot|live|pointer objects
+- assertion_basis TEXT  -- nullable legacy-unknown, otherwise asserted|inferred
+- as_of TEXT  -- nullable RFC 3339 UTC timestamp
+- expires_at TEXT  -- nullable RFC 3339 UTC timestamp, constrained at the boundary to >= as_of
+- canonical_ids TEXT NOT NULL DEFAULT '[]'  -- JSON array of required authority identifiers
 - promoted_from TEXT  -- nullable proposal or explicitly promoted handoff id
 - superseded_by TEXT  -- nullable replacement record id
 - created_at TEXT NOT NULL
@@ -78,7 +82,7 @@ Indexes: type, status, project, updated_at.
 
 Defaults: handoff→open, proposal→open, others→draft on create unless specified; promote sets durable type status to `active` (troubleshoot may be `done` if requested).
 
-Schema version is 2. New databases bootstrap directly at v2. Existing schema-v1 databases are refused during normal open and require explicit `kb migrate` preview followed by `kb migrate --apply`. Preview is read-only. Apply is transactional, classifies only durable → existing proposal/handoff as promotion provenance and record → existing durable as replacement lineage, preserves every other legacy pair in the ambiguity table, updates the schema version last, verifies integrity, and refuses reapplication.
+Schema version is 3. New databases bootstrap directly at v3. Existing schema-v1 and schema-v2 databases are refused during normal open and require explicit `kb migrate` preview followed by `kb migrate --apply` for each version step. Preview is read-only. V1→v2 retains the lineage classification contract. V2→v3 transactionally adds Slice-1 fields, wraps each legacy evidence string as a weak pointer without fabricating time or hash, preserves FTS/lineage/authority metadata, updates the schema version last among mutations, verifies integrity, and refuses reapplication.
 
 ## Write policy in store
 
@@ -95,7 +99,7 @@ Schema version is 2. New databases bootstrap directly at v2. Existing schema-v1 
 
 ## CLI (`kb`)
 
-`kb init` is the only path that creates directories, a database, schema, or authority metadata. All ordinary commands open an existing schema-v2 database and fail closed if it is absent. `kb migrate` requires an existing schema-v1 database. `help`, `version`, `contract`, and `path` do not attach to SQLite.
+`kb init` is the only path that creates directories, a database, schema, or authority metadata. All ordinary commands open an existing schema-v3 database and fail closed if it is absent or needs migration. `kb migrate` requires an existing schema-v1 or schema-v2 database. `help`, `version`, `contract`, and `path` do not attach to SQLite.
 
 Vault discovery resolves symlinks to the physical cwd before walking upward. It is read-only. Explicit init may create the discovered vault's `.agent-kb` directory privately, but must not chmod or otherwise mutate the pre-existing vault root.
 
@@ -107,6 +111,7 @@ kb contract [--json]
 kb search <query> [--type t] [--status s] [--project p] [--limit n] [--json]
 kb get <id> [--json]
 kb upsert --input <file|-> [--json]
+kb assemble --input <file|-> [--json]
 kb promote <proposalId> --input <file|-> [--json]
 kb close <id> [--status closed|archived] [--json]
 kb supersede <oldId> <newId> [--json]
@@ -117,9 +122,11 @@ kb path [--json]
 
 Contract version `1` machine mode is explicitly requested with `--json`. It emits exactly one success or error envelope on stdout, leaves stderr empty, and exits `0` on success, `2` on stable contract errors, or `1` on internal failure. Stable error codes distinguish uninitialized database, authority mismatch, not found, invalid input/command, schema mismatch/migration required, conflict, and internal failure.
 
-Init writes `meta.authority_domain_id`. Public adapters set `AGENT_KB_EXPECTED_DOMAIN`; mismatch or a bound adapter attaching to a legacy unbound database fails closed. Existing in-process callers may open an existing unbound schema-v2 database when no expected domain is configured.
+Init writes `meta.authority_domain_id`. Public adapters set `AGENT_KB_EXPECTED_DOMAIN`; mismatch or a bound adapter attaching to a legacy unbound database fails closed. Existing in-process callers may open an existing unbound schema-v3 database when no expected domain is configured.
 
-Structured upsert/promote input rejects unknown fields, keeps tags/evidence as JSON arrays, and defaults omitted upsert provenance to `agent`. Legacy interactive flags remain available. Promotion never uses general upsert semantics to replace an existing durable ID.
+Structured upsert/promote input rejects unknown fields. Tags and canonical IDs remain strict string arrays. Legacy `evidence` string arrays remain accepted and are stored as weak pointers; `evidence_items` accepts strict discriminated objects. CLI and `KbStore.upsert()` both reject requests containing both evidence forms. Full records preserve `evidence` as URI strings and add `evidence_items`. Promotion never uses general upsert semantics to replace an existing durable ID.
+
+`KbStore.assemble()` receives validated input and queries only existing troubleshooting search/ranking. The CLI validates `query`, `risk_class`, deterministic `now`, supplied canonical snippets, live-verified record IDs, and fixed upper bounds (5 memory records, 3 canonical snippets, 6000 packed-context characters); canonical verification from later than `now` is invalid. Staleness uses the inclusive `expires_at <= now` boundary. Required canonical snippets pack before memory. Returned context is always within the configured character limit and exposes `omitted_memory_ids` and `omitted_canonical_ids`. R0/R1 expose a bounded degraded pack; R2/R3 fail closed for missing or omitted live/canonical verification, omitted relevant memory, selected lineage conflicts, canonical overflow, or context overflow. The pure assembler performs no external calls. T1 provisional lifecycle, orchestration, wrappers/connectors, embeddings, event journaling, and automatic capture remain out of scope.
 
 ## Portable skill and optional legacy integration
 
@@ -148,6 +155,8 @@ npm run smoke:maintenance
 npm run smoke:eval
 npm run smoke:diagnostics
 npm run smoke:migration
+npm run smoke:mnemosyne-slice1
+node --check src/assembler.ts
 node --check src/cli.ts
 ```
 

@@ -1,7 +1,13 @@
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { resolve } from "node:path";
-import { durableTypes, type LegacyLineageAmbiguity, type MigrationReport } from "./types.ts";
+import {
+  durableTypes,
+  type LegacyLineageAmbiguity,
+  type MigrationReport,
+  type V1ToV2MigrationReport,
+  type V2ToV3MigrationReport,
+} from "./types.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
 
 const REPORT_LIMIT = 100;
@@ -109,7 +115,7 @@ function buildReport(
   facts: readonly LegacyRecordFact[],
   links: readonly ClassifiedLink[],
   check: string,
-): MigrationReport {
+): V1ToV2MigrationReport {
   const promotions = links.filter((link) => link.kind === "promotion");
   const replacements = links.filter((link) => link.kind === "replacement");
   const ambiguities: LegacyLineageAmbiguity[] = links
@@ -129,7 +135,7 @@ function buildReport(
     mode,
     path: resolve(path),
     from_schema_version: 1,
-    to_schema_version: SCHEMA_VERSION,
+    to_schema_version: 2,
     legacy_link_count: links.length,
     promotion_count: promotions.length,
     replacement_count: replacements.length,
@@ -150,7 +156,7 @@ export function migrateV1ToV2(path: string, apply: boolean): MigrationReport {
   try {
     const version = schemaVersion(db);
     if (version !== 1) {
-      throw new Error(version === SCHEMA_VERSION
+      throw new Error(version === 2
         ? "Database is already schema v2; refusing migration reapplication."
         : `Migration supports schema v1 only; found schema v${version}.`);
     }
@@ -185,7 +191,7 @@ export function migrateV1ToV2(path: string, apply: boolean): MigrationReport {
       if (db.prepare("PRAGMA foreign_key_check").all().length !== 0) throw new Error("Migration foreign_key_check failed.");
       const transactionalCheck = quickCheck(db);
       if (transactionalCheck !== "ok") throw new Error(`Migration quick_check failed: ${transactionalCheck}.`);
-      db.prepare("UPDATE meta SET value=? WHERE key='schema_version'").run(String(SCHEMA_VERSION));
+      db.prepare("UPDATE meta SET value=? WHERE key='schema_version'").run("2");
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
@@ -197,4 +203,116 @@ export function migrateV1ToV2(path: string, apply: boolean): MigrationReport {
   } finally {
     db.close();
   }
+}
+
+function assertV2Shape(db: DatabaseSync): void {
+  const columns = new Set(db.prepare("PRAGMA table_info(records)").all().map((value) => rowString(rowObject(value), "name")));
+  for (const required of ["id", "evidence", "promoted_from", "superseded_by"]) {
+    if (!columns.has(required)) throw new Error(`Schema-v2 records table lacks required column '${required}'.`);
+  }
+  for (const next of ["assertion_basis", "as_of", "expires_at", "canonical_ids"]) {
+    if (columns.has(next)) throw new Error(`Schema-v2 metadata conflicts with schema-v3 column '${next}'; refusing migration.`);
+  }
+}
+
+function legacyEvidence(value: unknown, recordId: string): string[] {
+  if (typeof value !== "string") throw new Error(`Record '${recordId}' evidence is not JSON text.`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`Record '${recordId}' evidence is invalid JSON.`, { cause: error });
+  }
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+    throw new Error(`Record '${recordId}' evidence must be a JSON array of strings.`);
+  }
+  return parsed;
+}
+
+function buildV2Report(
+  path: string,
+  mode: "preview" | "applied",
+  recordCount: number,
+  evidenceItemCount: number,
+  check: string,
+): V2ToV3MigrationReport {
+  return {
+    mode,
+    path: resolve(path),
+    from_schema_version: 2,
+    to_schema_version: 3,
+    record_count: recordCount,
+    evidence_item_count: evidenceItemCount,
+    wrapped_pointer_count: evidenceItemCount,
+    quick_check: check,
+  };
+}
+
+export function migrateV2ToV3(path: string, apply: boolean): V2ToV3MigrationReport {
+  if (!path.trim() || path.includes("\0")) throw new Error("Migration path must be a non-empty filesystem path.");
+  if (!existsSync(path)) throw new Error(`Agent-KB is not initialized at ${resolve(path)}; migration will not create it.`);
+  const db = new DatabaseSync(path, { readOnly: !apply });
+  try {
+    const version = schemaVersion(db);
+    if (version !== 2) {
+      throw new Error(version === SCHEMA_VERSION
+        ? "Database is already schema v3; refusing migration reapplication."
+        : `Migration supports schema v2 only; found schema v${version}.`);
+    }
+    assertV2Shape(db);
+    const rows = db.prepare("SELECT id,evidence FROM records ORDER BY id").all().map((value) => {
+      const row = rowObject(value);
+      const id = rowString(row, "id");
+      return { id, evidence: legacyEvidence(row.evidence, id) };
+    });
+    const evidenceItemCount = rows.reduce((total, row) => total + row.evidence.length, 0);
+    const beforeCheck = quickCheck(db);
+    if (beforeCheck !== "ok") throw new Error(`Pre-migration quick_check failed: ${beforeCheck}.`);
+    if (!apply) return buildV2Report(path, "preview", rows.length, evidenceItemCount, beforeCheck);
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(`
+        ALTER TABLE records ADD COLUMN assertion_basis TEXT
+          CHECK (assertion_basis IS NULL OR assertion_basis IN ('asserted', 'inferred'));
+        ALTER TABLE records ADD COLUMN as_of TEXT;
+        ALTER TABLE records ADD COLUMN expires_at TEXT;
+        ALTER TABLE records ADD COLUMN canonical_ids TEXT NOT NULL DEFAULT '[]';
+      `);
+      const updateEvidence = db.prepare("UPDATE records SET evidence=? WHERE id=?");
+      for (const row of rows) {
+        updateEvidence.run(JSON.stringify(row.evidence.map((uri) => ({ kind: "pointer", uri }))), row.id);
+      }
+      db.prepare("UPDATE meta SET value=? WHERE key='schema_version'").run(String(SCHEMA_VERSION));
+      if (db.prepare("PRAGMA foreign_key_check").all().length !== 0) throw new Error("Migration foreign_key_check failed.");
+      const transactionalCheck = quickCheck(db);
+      if (transactionalCheck !== "ok") throw new Error(`Migration quick_check failed: ${transactionalCheck}.`);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    const afterCheck = quickCheck(db);
+    if (afterCheck !== "ok") throw new Error(`Post-migration quick_check failed: ${afterCheck}.`);
+    return buildV2Report(path, "applied", rows.length, evidenceItemCount, afterCheck);
+  } finally {
+    db.close();
+  }
+}
+
+export function migrateDatabase(path: string, apply: boolean): MigrationReport {
+  if (!path.trim() || path.includes("\0")) throw new Error("Migration path must be a non-empty filesystem path.");
+  if (!existsSync(path)) throw new Error(`Agent-KB is not initialized at ${resolve(path)}; migration will not create it.`);
+  const db = new DatabaseSync(path, { readOnly: true });
+  let version: number;
+  try {
+    version = schemaVersion(db);
+  } finally {
+    db.close();
+  }
+  if (version === 1) return migrateV1ToV2(path, apply);
+  if (version === 2) return migrateV2ToV3(path, apply);
+  throw new Error(version === SCHEMA_VERSION
+    ? `Database is already schema v${SCHEMA_VERSION}; refusing migration reapplication.`
+    : `No migration path is available from schema v${version}.`);
 }

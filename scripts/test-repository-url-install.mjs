@@ -144,7 +144,7 @@ try {
   const statusEnvelope = JSON.parse(status.stdout);
   assert.equal(statusEnvelope.ok, true);
   assert.equal(statusEnvelope.data.path, join(resolve(destination), ".agent-kb", "kb.sqlite"));
-  assert.equal(statusEnvelope.data.schemaVersion, 2);
+  assert.equal(statusEnvelope.data.schemaVersion, 3);
   assert.equal(statSync(join(destination, ".agent-kb")).mode & 0o777, 0o700);
   assert.equal(statSync(join(destination, ".agent-kb", "kb.sqlite")).mode & 0o777, 0o600);
   assert.equal(existsSync(join(destination, "INIT.md")), false, "installer left INIT.md after verified install");

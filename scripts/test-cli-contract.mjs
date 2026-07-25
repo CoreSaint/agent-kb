@@ -90,13 +90,13 @@ try {
   const initResult = await run(["init", "--authority-domain", domain, "--json"]);
   assert.equal(initResult.status, 0);
   const init = envelope(initResult);
-  assert.deepEqual(init.data, { path: resolve(databasePath), schemaVersion: 2, authorityDomainId: domain });
+  assert.deepEqual(init.data, { path: resolve(databasePath), schemaVersion: 3, authorityDomainId: domain });
   assert.deepEqual(readdirSync(absentParent), ["kb.sqlite"]);
   assert.equal(statSync(absentParent).mode & 0o777, 0o700);
   assert.equal(statSync(databasePath).mode & 0o777, 0o600);
 
   const db = new DatabaseSync(databasePath, { readOnly: true });
-  assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "2");
+  assert.equal(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "3");
   assert.equal(db.prepare("SELECT value FROM meta WHERE key='authority_domain_id'").get().value, domain);
   assert.equal(db.prepare("PRAGMA user_version").get().user_version, 0);
   db.close();

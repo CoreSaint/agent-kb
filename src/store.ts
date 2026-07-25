@@ -3,6 +3,16 @@ import { chmodSync, closeSync, lstatSync, openSync, statSync, unlinkSync } from 
 import { resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { initDb, kbPath, openDb, readAuthorityDomain } from "./db.ts";
+import {
+  assembleContext,
+  validateAssertionBasis,
+  validateCanonicalIds,
+  validateEvidenceItems,
+  validateTemporalOrder,
+  validateTimestamp,
+  type AssembleInput,
+  type AssembleResult,
+} from "./assembler.ts";
 import { KbError } from "./errors.ts";
 import { assertNoObviousSecrets } from "./secrets.ts";
 import { SCHEMA_VERSION } from "./schema.ts";
@@ -14,7 +24,9 @@ import {
   recordTypes,
   sources,
   type BackupResult,
+  type AssertionBasis,
   type DurableType,
+  type Evidence,
   type KbRecord,
   type LegacyLineageAmbiguity,
   type MaintenanceReport,
@@ -36,11 +48,24 @@ import {
 function now(): string { return new Date().toISOString(); }
 function includes<T extends readonly string[]>(list: T, value: string): value is T[number] { return list.some((item) => item === value); }
 function parseJsonArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
+  if (Array.isArray(value)) {
+    if (value.some((item) => typeof item !== "string")) throw new Error("Expected JSON array of strings.");
+    return value;
+  }
   if (typeof value !== "string" || !value.trim()) return [];
-  const parsed = JSON.parse(value);
-  if (!Array.isArray(parsed)) throw new Error("Expected JSON array");
-  return parsed.map(String);
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) throw new Error("Expected JSON array of strings.");
+  return parsed;
+}
+function parseEvidence(value: unknown): Evidence[] {
+  if (typeof value !== "string") throw new Error("Expected evidence JSON text.");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error("Expected valid evidence JSON.", { cause: error });
+  }
+  return validateEvidenceItems(parsed, "stored evidence");
 }
 function objectRow(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -66,6 +91,11 @@ function rowToRecord(value: unknown): KbRecord {
   assertType(type);
   assertConfidence(confidence);
   assertSource(source);
+  const evidenceItems = parseEvidence(row.evidence);
+  const assertionBasis = validateAssertionBasis(row.assertion_basis, "stored assertion_basis");
+  const asOf = row.as_of === null ? null : validateTimestamp(row.as_of, "stored as_of");
+  const expiresAt = row.expires_at === null ? null : validateTimestamp(row.expires_at, "stored expires_at");
+  validateTemporalOrder(asOf, expiresAt);
   return {
     id: stringField(row, "id"),
     type,
@@ -76,13 +106,18 @@ function rowToRecord(value: unknown): KbRecord {
     body: stringField(row, "body"),
     summary: stringField(row, "summary"),
     confidence,
-    evidence: parseJsonArray(row.evidence),
+    evidence: evidenceItems.map((item) => item.uri),
+    evidence_items: evidenceItems,
     promoted_from: nullableStringField(row, "promoted_from"),
     superseded_by: nullableStringField(row, "superseded_by"),
     created_at: stringField(row, "created_at"),
     updated_at: stringField(row, "updated_at"),
     last_verified_at: nullableStringField(row, "last_verified_at"),
     source,
+    assertion_basis: assertionBasis,
+    as_of: asOf,
+    expires_at: expiresAt,
+    canonical_ids: validateCanonicalIds(parseJsonArray(row.canonical_ids), "stored canonical_ids"),
   };
 }
 function assertType(type: string): asserts type is RecordType {
@@ -426,6 +461,9 @@ export class KbStore {
   upsert(input: UpsertInput, opts: { forceDurable?: boolean } = {}): KbRecord {
     if (!input.id?.trim()) throw new Error("id is required.");
     if (!input.title?.trim()) throw new Error("title is required.");
+    if (input.evidence !== undefined && input.evidence_items !== undefined) {
+      throw new Error("Use only one of evidence and evidence_items.");
+    }
     assertType(input.type);
     const existing = this.get(input.id);
     const durableNew = includes(durableTypes, input.type) && !existing;
@@ -438,25 +476,43 @@ export class KbStore {
     const source = input.source ?? existing?.source ?? "user";
     assertSource(source);
     const tags = input.tags ?? existing?.tags ?? [];
-    const evidence = input.evidence ?? existing?.evidence ?? [];
+    const evidenceItems = input.evidence_items !== undefined
+      ? validateEvidenceItems(input.evidence_items)
+      : input.evidence !== undefined
+        ? validateEvidenceItems(input.evidence.map((uri) => ({ kind: "pointer", uri })))
+        : existing?.evidence_items ?? [];
+    const assertionBasis: AssertionBasis | null = input.assertion_basis !== undefined
+      ? validateAssertionBasis(input.assertion_basis)
+      : existing?.assertion_basis ?? null;
+    const asOf = input.as_of !== undefined
+      ? (input.as_of === null ? null : validateTimestamp(input.as_of, "as_of"))
+      : existing?.as_of ?? null;
+    const expiresAt = input.expires_at !== undefined
+      ? (input.expires_at === null ? null : validateTimestamp(input.expires_at, "expires_at"))
+      : existing?.expires_at ?? null;
+    validateTemporalOrder(asOf, expiresAt);
+    const canonicalIds = input.canonical_ids !== undefined
+      ? validateCanonicalIds(input.canonical_ids)
+      : existing?.canonical_ids ?? [];
     const body = input.body ?? existing?.body ?? "";
     const summary = input.summary ?? existing?.summary ?? "";
     const project = input.project !== undefined ? input.project : existing?.project ?? null;
-    assertNoObviousSecrets([input.id, input.title, project, summary, body, ...tags, ...evidence]);
+    assertNoObviousSecrets([input.id, input.title, project, summary, body, ...tags, ...evidenceItems.map((item) => item.uri), ...canonicalIds]);
     const ts = now();
     const record = {
       id: input.id.trim(), type: input.type, title: input.title.trim(), status,
       project: project?.trim() || null, tags: JSON.stringify(tags), body, summary,
-      confidence, evidence: JSON.stringify(evidence),
+      confidence, evidence: JSON.stringify(evidenceItems),
       promoted_from: input.promoted_from !== undefined ? input.promoted_from : existing?.promoted_from ?? null,
       superseded_by: input.superseded_by !== undefined ? input.superseded_by : existing?.superseded_by ?? null,
       created_at: existing?.created_at ?? ts, updated_at: ts,
       last_verified_at: input.last_verified_at !== undefined ? input.last_verified_at : existing?.last_verified_at ?? null,
-      source,
+      source, assertion_basis: assertionBasis, as_of: asOf, expires_at: expiresAt,
+      canonical_ids: JSON.stringify(canonicalIds),
     };
-    this.db.prepare(`INSERT INTO records (id,type,title,status,project,tags,body,summary,confidence,evidence,promoted_from,superseded_by,created_at,updated_at,last_verified_at,source)
-      VALUES (@id,@type,@title,@status,@project,@tags,@body,@summary,@confidence,@evidence,@promoted_from,@superseded_by,@created_at,@updated_at,@last_verified_at,@source)
-      ON CONFLICT(id) DO UPDATE SET title=excluded.title,status=excluded.status,project=excluded.project,tags=excluded.tags,body=excluded.body,summary=excluded.summary,confidence=excluded.confidence,evidence=excluded.evidence,promoted_from=excluded.promoted_from,superseded_by=excluded.superseded_by,updated_at=excluded.updated_at,last_verified_at=excluded.last_verified_at,source=excluded.source`).run(record);
+    this.db.prepare(`INSERT INTO records (id,type,title,status,project,tags,body,summary,confidence,evidence,promoted_from,superseded_by,created_at,updated_at,last_verified_at,source,assertion_basis,as_of,expires_at,canonical_ids)
+      VALUES (@id,@type,@title,@status,@project,@tags,@body,@summary,@confidence,@evidence,@promoted_from,@superseded_by,@created_at,@updated_at,@last_verified_at,@source,@assertion_basis,@as_of,@expires_at,@canonical_ids)
+      ON CONFLICT(id) DO UPDATE SET title=excluded.title,status=excluded.status,project=excluded.project,tags=excluded.tags,body=excluded.body,summary=excluded.summary,confidence=excluded.confidence,evidence=excluded.evidence,promoted_from=excluded.promoted_from,superseded_by=excluded.superseded_by,updated_at=excluded.updated_at,last_verified_at=excluded.last_verified_at,source=excluded.source,assertion_basis=excluded.assertion_basis,as_of=excluded.as_of,expires_at=excluded.expires_at,canonical_ids=excluded.canonical_ids`).run(record);
     const saved = this.get(input.id);
     if (!saved) throw new Error(`Failed to read saved record ${input.id}.`);
     return saved;
@@ -482,11 +538,18 @@ export class KbStore {
       const durable = this.upsert({
         id, type: input.type, title, status, project: input.project !== undefined ? input.project : src.project,
         tags: input.tags ?? src.tags, body: input.body ?? src.body, summary: input.summary ?? src.summary,
-        confidence: input.confidence ?? src.confidence, evidence: input.evidence ?? src.evidence,
+        confidence: input.confidence ?? src.confidence,
+        evidence: input.evidence,
+        evidence_items: input.evidence_items ?? (input.evidence === undefined ? src.evidence_items : undefined),
+        assertion_basis: input.assertion_basis !== undefined ? input.assertion_basis : src.assertion_basis,
+        as_of: input.as_of !== undefined ? input.as_of : src.as_of,
+        expires_at: input.expires_at !== undefined ? input.expires_at : src.expires_at,
+        canonical_ids: input.canonical_ids ?? src.canonical_ids,
         promoted_from: sourceId, last_verified_at: input.last_verified_at ?? null,
         source: src.source === "user" ? "user" : "agent_promoted",
       }, { forceDurable: true });
-      if (src.type === "proposal") this.upsert({ ...src, status: "promoted" }, { forceDurable: false });
+      const { evidence: _sourceEvidence, ...sourceForUpdate } = src;
+      if (src.type === "proposal") this.upsert({ ...sourceForUpdate, status: "promoted" }, { forceDurable: false });
       this.db.exec("COMMIT");
       return durable;
     } catch (error) {
@@ -499,7 +562,8 @@ export class KbStore {
     const rec = this.get(id);
     if (!rec) throw new Error(`Record not found: ${id}.`);
     if (rec.type !== "handoff") throw new Error("close only applies to handoff records.");
-    return this.upsert({ ...rec, status }, { forceDurable: false });
+    const { evidence: _recordEvidence, ...recordForUpdate } = rec;
+    return this.upsert({ ...recordForUpdate, status }, { forceDurable: false });
   }
 
   supersede(oldId: string, newId: string): KbRecord {
@@ -508,7 +572,8 @@ export class KbStore {
     if (!old) throw new Error(`Old record not found: ${oldId}.`);
     if (!this.get(newId)) throw new Error(`New record not found: ${newId}.`);
     const status = old.type === "decision" ? "superseded" : allowedStatuses[old.type].includes("deprecated") ? "deprecated" : "archived";
-    return this.upsert({ ...old, status, superseded_by: newId }, { forceDurable: includes(durableTypes, old.type) });
+    const { evidence: _oldEvidence, ...oldForUpdate } = old;
+    return this.upsert({ ...oldForUpdate, status, superseded_by: newId }, { forceDurable: includes(durableTypes, old.type) });
   }
 
   /**
@@ -522,6 +587,11 @@ export class KbStore {
   /** Compact opt-in score diagnostics. Full body, evidence, tags, and lineage are excluded. */
   searchWithDiagnostics(query = "", filters: SearchFilters = {}): SearchDiagnosticHit[] {
     return this.rankSearch(query, filters).map((hit) => hit.diagnostic);
+  }
+
+  assemble(input: AssembleInput): AssembleResult {
+    const candidates = this.search(input.query, { type: "troubleshoot", limit: 20 });
+    return assembleContext(candidates, input);
   }
 
   private rankSearch(query: string, filters: SearchFilters): RankedSearchHit[] {

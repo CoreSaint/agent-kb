@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { backup, DatabaseSync } from "node:sqlite";
 import { initDb, openDb } from "../src/db.ts";
-import { migrateV1ToV2 } from "../src/migration.ts";
+import { migrateV1ToV2, migrateV2ToV3 } from "../src/migration.ts";
 import { KbStore } from "../src/store.ts";
 
 const root = mkdtempSync(join(tmpdir(), "agent-kb-schema-v2-"));
@@ -185,6 +185,15 @@ try {
   );
   assert.equal(inspect(sourcePath).version, "1", "private-copy migration changed its source");
   assert.throws(() => migrateV1ToV2(privateCopyPath, true), /already schema v2/);
+  const v3PreviewBefore = inspect(privateCopyPath);
+  const v3Preview = migrateV2ToV3(privateCopyPath, false);
+  assert.equal(v3Preview.mode, "preview");
+  assert.equal(v3Preview.from_schema_version, 2);
+  assert.deepEqual(inspect(privateCopyPath), v3PreviewBefore, "v2 to v3 preview changed the database");
+  const v3Applied = migrateV2ToV3(privateCopyPath, true);
+  assert.equal(v3Applied.mode, "applied");
+  assert.equal(v3Applied.quick_check, "ok");
+  assert.equal(inspect(privateCopyPath).version, "3");
 
   const store = new KbStore(openDb(privateCopyPath), privateCopyPath);
   try {
@@ -254,9 +263,9 @@ try {
   );
   assert.deepEqual(rawSnapshot(noMetaPath), noMetaBefore, "no-meta refusal mutated foreign schema or content");
 
-  const newPath = join(root, "new-v2.sqlite");
+  const newPath = join(root, "new-v3.sqlite");
   const initialized = initDb(newPath, "22222222-2222-4222-8222-222222222222");
-  assert.equal(initialized.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "2");
+  assert.equal(initialized.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get().value, "3");
   assert.equal(initialized.db.prepare("SELECT value FROM meta WHERE key='authority_domain_id'").get().value, "22222222-2222-4222-8222-222222222222");
   initialized.db.close();
 

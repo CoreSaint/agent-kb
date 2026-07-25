@@ -225,7 +225,7 @@ try {
   const statusEnvelope = machine(status);
   assert.equal(statusEnvelope.ok, true);
   assert.equal(statusEnvelope.data.path, join(resolve(destination), ".agent-kb", "kb.sqlite"));
-  assert.equal(statusEnvelope.data.schemaVersion, 2);
+  assert.equal(statusEnvelope.data.schemaVersion, 3);
   assert.match(statusEnvelope.data.authorityDomainId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
   assert.equal(statSync(join(destination, ".agent-kb")).mode & 0o777, 0o700);
   assert.equal(statSync(join(destination, ".agent-kb", "kb.sqlite")).mode & 0o777, 0o600);

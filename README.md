@@ -66,9 +66,9 @@ Database path precedence is deterministic:
 2. Otherwise, agent-KB resolves the physical process working directory and walks upward to the first directory containing regular files named both `CONTRACT.md` and `MAP.md`. That contract vault uses `<vault>/.agent-kb/kb.sqlite`.
 3. If no contract vault is found, the compatibility fallback remains `~/.local/share/agent-kb/kb.sqlite`.
 
-Physical resolution means a cwd reached through a symlink discovers the vault containing the symlink target, not the directory containing the symlink. Path resolution and ordinary reads never create `.agent-kb` or SQLite files. Explicit init may create `.agent-kb` with mode `0700`, creates the schema-v2 database with mode `0600`, and never changes the contract-vault root's permissions. Init also stores a generated, non-secret authority-domain UUID. Tests may supply a validated UUID with `kb init --authority-domain UUID`; `kb status` returns it without mutation.
+Physical resolution means a cwd reached through a symlink discovers the vault containing the symlink target, not the directory containing the symlink. Path resolution and ordinary reads never create `.agent-kb` or SQLite files. Explicit init may create `.agent-kb` with mode `0700`, creates the schema-v3 database with mode `0600`, and never changes the contract-vault root's permissions. Init also stores a generated, non-secret authority-domain UUID. Tests may supply a validated UUID with `kb init --authority-domain UUID`; `kb status` returns it without mutation.
 
-Public adapters should bind attachment by setting `AGENT_KB_EXPECTED_DOMAIN` to the UUID returned by init or status. A wrong UUID, or any expected UUID against a legacy unbound schema-v2 database, fails closed with `DOMAIN_MISMATCH`. Existing in-process callers remain compatible: an existing schema-v2 database without authority metadata opens when no expected-domain binding is supplied, and status reports a null domain until it is explicitly reinitialized outside this contract slice.
+Public adapters should bind attachment by setting `AGENT_KB_EXPECTED_DOMAIN` to the UUID returned by init or status. A wrong UUID, or any expected UUID against a legacy unbound database, fails closed with `DOMAIN_MISMATCH`. Existing in-process callers remain compatible: an existing schema-v3 database without authority metadata opens when no expected-domain binding is supplied, and status reports a null domain until it is explicitly reinitialized outside this contract slice.
 
 - `kb search` defaults to **TOON** compact hits (id, type, status, project, confidence, title, summary).
 - Other interactive commands retain readable JSON output.
@@ -95,16 +95,16 @@ printf '%s\n' '{"id":"decision:demo","type":"decision"}' \
 ```
 
 Promotion takes an immediate SQLite write transaction, rejects an existing durable ID, creates exactly one durable lineage record, and marks a proposal promoted atomically. Concurrent promotion attempts produce one success and one `CONFLICT`.
-## Schema-v1 migration
+## Explicit schema migrations
 
-Normal open, search, and get operations refuse schema-v1 databases; they never migrate implicitly. Set `AGENT_KB_PATH` to the intended database, preview first, inspect every ambiguity, and only then apply:
+Normal open, search, and get operations refuse schema-v1 and schema-v2 databases; they never migrate implicitly. Set `AGENT_KB_PATH` to the intended database, preview one step, inspect it, and only then apply:
 
 ```sh
 AGENT_KB_PATH=/private/disposable-copy.sqlite ./bin/kb migrate
 AGENT_KB_PATH=/private/disposable-copy.sqlite ./bin/kb migrate --apply
 ```
 
-Preview opens the database read-only. Apply supports schema v1 only, runs in one transaction, updates `meta.schema_version` last, verifies SQLite integrity, and refuses reapplication after schema v2. Migration classifies only these preserved facts:
+Each invocation advances one version. Schema v1→v2 retains the existing lineage classification behavior; run preview/apply again for v2→v3. Every preview opens read-only. Every apply is one transaction, updates `meta.schema_version` last among mutations, runs integrity checks, and refuses reapplication.
 
 - a durable record pointing to an existing proposal or handoff becomes `promoted_from`;
 - any record pointing to an existing durable record becomes `superseded_by`;
@@ -113,6 +113,24 @@ Preview opens the database read-only. Apply supports schema v1 only, runs in one
 Every unclassified legacy pair is retained with a reason in `lineage_migration_ambiguities`. Migration output is metadata-only and bounded to 100 ambiguity rows and 100 promoted-proposal review rows, with totals and truncation flags. `maintain` exposes the same durable ambiguity audit without bodies or evidence. Promoted proposals with zero or multiple explicit durable targets stay visible for review and cannot be pruned.
 
 Example: promoting `proposal:cache` creates `decision:cache` with `promoted_from: "proposal:cache"` and `superseded_by: null`. Later superseding it with `decision:cache-v2` changes only `decision:cache.superseded_by`; its `promoted_from` remains `"proposal:cache"`.
+
+Schema v3 adds nullable `assertion_basis` (`asserted` or `inferred`), nullable `as_of`, nullable `expires_at`, and `canonical_ids` as a JSON string array. Existing records migrate with a null assertion basis and timestamps rather than invented certainty. The existing `evidence` SQLite JSON text now stores discriminated objects:
+
+- `snapshot`: `uri`, `observed_at`, and a SHA-256 content hash; strongest reproducible evidence;
+- `live`: `uri` and optional `checked_at`; mutable evidence whose current verification is supplied by a wrapper;
+- `pointer`: `uri`; weak discovery or legacy evidence.
+
+The v2→v3 migration wraps every legacy evidence string as `{ \"kind\": \"pointer\", \"uri\": \"...\" }` without fabricating a timestamp or hash. Full-record API output retains the legacy `evidence` URI-string array and adds `evidence_items` with the typed objects; this preserves existing readers while exposing evidence strength.
+
+## Slice-1 context assembly
+
+`kb assemble --input <file|-> --json` accepts `query`, `risk_class` (`R0`–`R3`), optional deterministic `now`, verified `canonical_snippets` (`id`, `text`, `verified_at`), supplied `live_verified_record_ids`, and optional `limits`. Defaults cap selected troubleshooting records at 5, canonical snippets at 3, and the packed context at 6000 characters. A canonical snippet later than `now` is rejected. Unknown fields, malformed evidence, timestamps, hashes, arrays, limits, and risk classes fail at the boundary.
+
+Assembly uses only the existing lexical search/ranking path and supplied receipts; the core makes no network, model, connector, or external-system calls. It marks a record stale exactly when `expires_at <= now`, exposes typed evidence classes, lineage conflicts when both a record and its `superseded_by` target were selected, required canonical IDs, verification requirements, and an explicit `gate.allowed` plus machine-readable reasons. Authority packing orders required canonical snippets before memory, then orders memory from snapshot/live-backed records through active promoted records to handoff/session-strength material; the T1 provisional tier is reserved but not implemented.
+
+The returned `items` and `canonical_snippets` are always deterministically bounded by `budget.max_context_chars`; `budget.estimated_context_chars` is the exact JSON length of those two packed arrays. `omitted_memory_ids` and `omitted_canonical_ids` make every context omission visible. R0/R1 may return that bounded degraded pack with reasons. R2/R3 fail closed for omitted relevant memory or required authority, mutable or stale troubleshooting records without a supplied live-verification receipt, missing canonical snippets, lineage conflict, canonical-count overflow, or context overflow.
+
+Slice 1 does not provide a universal orchestrator, T1 probation lifecycle, tool-wrapper inventory, embeddings, event journal, automatic capture, or external connectors.
 
 ## Search
 
@@ -192,4 +210,7 @@ npm run smoke:maintenance
 npm run smoke:eval
 npm run smoke:diagnostics
 npm run smoke:migration
+npm run smoke:mnemosyne-slice1
+node --check src/cli.ts
+node --check src/assembler.ts
 ```

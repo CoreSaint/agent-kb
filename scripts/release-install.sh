@@ -135,7 +135,7 @@ if (!contract.ok || contract.contract_version !== "1" || contract.command !== "c
 const database = path.join(destinationReal, ".agent-kb", "kb.sqlite");
 if (!status.ok || status.contract_version !== "1" || status.command !== "status") fail("kb status envelope verification failed");
 if (status.data.path !== database || fs.realpathSync(status.data.path) !== database) fail("installed kb status did not point at the destination database real path");
-if (status.data.schemaVersion !== 2) fail("installed database schema version is not 2");
+if (status.data.schemaVersion !== 3) fail("installed database schema version is not 3");
 if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(status.data.authorityDomainId)) fail("installed database authority domain is invalid");
 if (mode(path.join(destinationReal, ".agent-kb")) !== 0o700) fail(".agent-kb mode is not 0700");
 if (mode(database) !== 0o600) fail("database mode is not 0600");
