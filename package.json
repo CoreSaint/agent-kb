@@ -15,6 +15,7 @@
     "smoke:diagnostics": "node ./scripts/smoke-search-diagnostics.mjs",
     "smoke:migration": "node ./scripts/smoke-schema-v2-migration.mjs",
     "smoke:mnemosyne-slice1": "node ./scripts/smoke-mnemosyne-slice1.mjs",
+    "smoke:mnemosyne-slice2": "node ./scripts/smoke-mnemosyne-slice2.mjs",
     "test:contract": "node ./scripts/test-cli-contract.mjs",
     "test:vault-discovery": "node ./scripts/test-vault-discovery.mjs",
     "smoke:vault-template": "node ./scripts/smoke-vault-template.mjs",

@@ -132,6 +132,14 @@ The returned `items` and `canonical_snippets` are always deterministically bound
 
 Slice 1 does not provide a universal orchestrator, T1 probation lifecycle, tool-wrapper inventory, embeddings, event journal, automatic capture, or external connectors.
 
+## Slice-2 Stage-0 repository adapters
+
+The repository Pi extension source now exposes schema-v3 write fields plus two strict assembly tools. `kb_assemble` is the generic operational-troubleshooting adapter: it accepts bounded canonical snippets but deliberately has no `live_verified_record_ids` or receipt input, so mutable/stale R2/R3 records remain blocked. `kb_git_preflight_assemble` is the specialized trust boundary for the approved `/var/home/marcin/Repo/agent-kb` + `origin` + `https://github.com/CoreSaint/agent-kb` canary. Its public schema has no record-id input: only the fixed `troubleshoot:git-prepush-canary` may be projected, after the store proves it is an active/done troubleshoot with at least one approved Git live-evidence URI, no unrelated live URI, and no pointer evidence.
+
+The verifier checks repository root, branch, HEAD, clean status, and exact remote URL both before and after the remote-ref/object/ancestry checks, then requires a second identical remote ref and SHA immediately before receipt issuance. The default runner inherits only `PATH`, replaces HOME/XDG and Git configuration sources with neutral locations, disables credential helpers, terminal prompting, and askpass, bounds time/output, and suppresses every unapproved remote URL. Neither tool mutates Git. `gate.allowed=true` is necessary for R2/R3 reliance but never authorizes push or another external write; domain and external-write approval remain separate. Receipts are immutable, non-secret, in-memory, fresh for at most 60 seconds, never accepted as tool input, and never persisted.
+
+Stage 0 is repository source plus offline fixtures only; it is not deployed. The real `ls-remote` canary, live schema-v3 cutover, installed extension/CLI changes, active skill activation, and fresh-Pi smoke remain deferred to separately authorized cutover stages. Run the deterministic no-network fixture with `npm run smoke:mnemosyne-slice2`.
+
 ## Search
 
 `kb search` uses hybrid lexical retrieval over FTS5 (no embeddings or LLM). It builds exact-ID, phrase, AND, title/tags, and OR lists, then applies Reciprocal Rank Fusion (RRF) with $K=60$ and list weights $3$, $2$, $1.5$, $1.5$, and $1$. For candidate $d$, raw lexical relevance is:
@@ -211,6 +219,9 @@ npm run smoke:eval
 npm run smoke:diagnostics
 npm run smoke:migration
 npm run smoke:mnemosyne-slice1
+npm run smoke:mnemosyne-slice2
 node --check src/cli.ts
 node --check src/assembler.ts
+node --check src/git-prepush-verifier.ts
+node --check extension/index.ts
 ```

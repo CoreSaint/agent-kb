@@ -132,13 +132,15 @@ Structured upsert/promote input rejects unknown fields. Tags and canonical IDs r
 
 The source skill is `skills/agent-memory-vault/SKILL.md`. Bootstrap installs it at `~/.agents/skills/agent-memory-vault/SKILL.md` using private user directories. An absent target is copied, a byte-identical target is accepted, and a differing target is a fail-closed conflict that is never overwritten.
 
-The skill uses cwd contract-vault discovery and only the root `./kb` launcher. It provides search/get, handoff, proposal, and promotion command mechanics while deferring behavior, authority, lifecycle, and safety policy to `CONTRACT.md`.
+The skill uses cwd contract-vault discovery and only the root `./kb` launcher. It provides search/get, handoff, proposal, promotion, and fail-closed assembly mechanics while deferring behavior, authority, lifecycle, and safety policy to `CONTRACT.md`. Portable assembly may perform a first pass and reassemble with verified canonical snippets, but it must never supply generic CLI `live_verified_record_ids`; no portable verifier-owned wrapper exists in Stage 0, so an R2/R3 live-verification requirement remains blocked.
 
-The repository's `extension/` directory may remain as optional legacy Pi integration. It is outside the deployable template and portable setup; no installed adapter is modified or required.
+The repository's `extension/` directory remains optional Pi integration outside the deployable template. Its Stage-0 source exposes strict schema-v3 write fields, a generic `kb_assemble` that cannot accept receipts or live-verification ids, and a specialized `kb_git_preflight_assemble` fixed to `troubleshoot:git-prepush-canary`, `/var/home/marcin/Repo/agent-kb`, `origin`, and `https://github.com/CoreSaint/agent-kb`. The public specialized schema has no record-id input. Before any Git command, the wrapper requires the fixed record to be an active/done troubleshoot with approved Git live evidence, no unrelated live URI, and no pointer. The verifier performs only bounded, non-interactive Git reads, never fetches, blocks when the remote object is absent locally, repeats root/branch/HEAD/clean-status/remote-URL checks after ancestry, and then requires a second identical remote ref and SHA before issuing a receipt. Its minimal environment inherits only `PATH`, neutralizes HOME/XDG and system/global Git configuration, disables helpers/prompts/askpass, and suppresses unapproved remote output. R2/R3 gate success remains distinct from domain and external-write authorization.
 
 ## Acceptance checks
 
 Every executable check uses disposable cwd, HOME, and database paths. `scripts/test-cli-contract.mjs` covers the JSON/SQLite contract; `scripts/test-vault-discovery.mjs` covers path precedence and no-create discovery; `scripts/smoke-vault-template.mjs` copies the scaffold, supplies this repository as its local tool without network/global installation, and verifies launcher, init/status, ignore rules, absent/identical/conflicting skill installation, private modes, conflict preservation, and cleanup. A disposable Codex acceptance repeats bootstrap and a handoff → proposal → promote → search/get workflow under a temporary HOME.
+
+`scripts/smoke-mnemosyne-slice2.mjs` loads repository extension source through Pi's model-free extension loader and uses disposable schema-v3 databases plus an injected deterministic Git runner. It covers strict tool schemas, v3 evidence variants, dual-evidence rejection, fixed canary binding and evidence failures, arbitrary-record injection, both-pass state changes, minimal runner-environment construction, the read-only command allowlist, credential-output suppression, generic/trusted assembly boundaries, receipt failures, R0/R1 bounds, and the absence of a mutation path. It performs no network operation. Real `ls-remote`, live migration/deployment, active skill changes, and Pi activation smoke are deferred to separately authorized cutover stages.
 
 ```bash
 TEST_ROOT="$(mktemp -d)"
@@ -156,8 +158,11 @@ npm run smoke:eval
 npm run smoke:diagnostics
 npm run smoke:migration
 npm run smoke:mnemosyne-slice1
+npm run smoke:mnemosyne-slice2
 node --check src/assembler.ts
 node --check src/cli.ts
+node --check src/git-prepush-verifier.ts
+node --check extension/index.ts
 ```
 
 ## Out of scope
