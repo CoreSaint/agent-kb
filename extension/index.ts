@@ -1,9 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { validateAssembleInput } from "/var/home/marcin/Repo/agent-kb/src/assembler.ts";
-import { formatHitsToon } from "/var/home/marcin/Repo/agent-kb/src/format.ts";
-import { gitPreflightAssemble } from "/var/home/marcin/Repo/agent-kb/src/git-prepush-verifier.ts";
-import { createStore, type KbStore } from "/var/home/marcin/Repo/agent-kb/src/store.ts";
+// Relative imports bind the extension to its package tree (repo checkout or
+// immutable staged runtime under ~/.local/share/agent-kb/runtimes/<sha>/).
+// Never import mutable absolute paths like /var/home/marcin/Repo/agent-kb/src/*.
+import { validateAssembleInput } from "../src/assembler.ts";
+import { formatHitsToon } from "../src/format.ts";
+import { gitPreflightAssemble } from "../src/git-prepush-verifier.ts";
+import { createStore, type KbStore } from "../src/store.ts";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; details?: unknown; isError?: boolean };
 
