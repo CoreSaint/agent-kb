@@ -278,6 +278,10 @@ export function migrateV2ToV3(path: string, apply: boolean): V2ToV3MigrationRepo
         ALTER TABLE records ADD COLUMN as_of TEXT;
         ALTER TABLE records ADD COLUMN expires_at TEXT;
         ALTER TABLE records ADD COLUMN canonical_ids TEXT NOT NULL DEFAULT '[]';
+        CREATE INDEX IF NOT EXISTS idx_records_type ON records(type);
+        CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+        CREATE INDEX IF NOT EXISTS idx_records_project ON records(project);
+        CREATE INDEX IF NOT EXISTS idx_records_updated_at ON records(updated_at);
       `);
       const updateEvidence = db.prepare("UPDATE records SET evidence=? WHERE id=?");
       for (const row of rows) {

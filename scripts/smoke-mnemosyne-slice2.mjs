@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { initDb } from "../src/db.ts";
 import {
   buildGitRunnerEnvironment,
@@ -15,8 +16,10 @@ import {
   verifyGitPrepush,
 } from "../src/git-prepush-verifier.ts";
 import { KbStore } from "../src/store.ts";
-import { loadExtensions } from "/var/home/linuxbrew/.linuxbrew/Cellar/pi-coding-agent/0.80.6/libexec/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
-import { Value } from "/var/home/linuxbrew/.linuxbrew/Cellar/pi-coding-agent/0.80.6/libexec/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/value/index.mjs";
+const piRoot = resolve(realpathSync("/home/linuxbrew/.linuxbrew/bin/pi"), "..", "..");
+const piModules = join(piRoot, "libexec/lib/node_modules/@earendil-works/pi-coding-agent");
+const { loadExtensions } = await import(pathToFileURL(join(piModules, "dist/core/extensions/loader.js")).href);
+const { Value } = await import(pathToFileURL(join(piModules, "node_modules/typebox/build/value/index.mjs")).href);
 
 process.umask(0o077);
 const root = mkdtempSync(join(tmpdir(), "agent-kb-mnemosyne-slice2-"));

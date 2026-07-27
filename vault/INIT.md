@@ -48,12 +48,19 @@ Complete every step before normal work. Keep this file if any step fails and rep
 
    ```sh
    if [ ! -e .agent-kb/kb.sqlite ]; then
-     ./kb init
+     init_json=$(.agent-kb/tool/bin/kb init --json)
+   else
+     init_json=$(.agent-kb/tool/bin/kb status --json)
    fi
+   node -e '
+   const fs=require("node:fs"); const report=JSON.parse(process.argv[1]); const domain=report?.data?.authorityDomainId;
+   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(domain)) process.exit(1);
+   fs.writeFileSync(".agent-kb/authority-domain", `${domain.toLowerCase()}\n`, {mode:0o600, flag:"wx"});
+   ' "$init_json"
    ./kb status --json
    ```
 
-   The status command must return a successful JSON envelope whose database path is this physical directory plus `/.agent-kb/kb.sqlite`. The database must be mode `0600`, `.agent-kb` must be mode `0700`, and the vault root permissions must remain unchanged.
+   The status command must return a successful JSON envelope whose database path is this physical directory plus `/.agent-kb/kb.sqlite`. The database and `.agent-kb/authority-domain` sidecar must be mode `0600`, `.agent-kb` must be mode `0700`, and the vault root permissions must remain unchanged. The launcher rejects a missing, malformed, symlinked, or non-private sidecar; a deliberate path/domain override must provide both variables.
 6. Only after every check above succeeds, remove this file with `rm INIT.md` and report completion.
 
 Never store secrets or credentials in Markdown or SQLite.

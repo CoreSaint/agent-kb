@@ -2,73 +2,42 @@
 
 Local typed SQLite knowledge base for agent handoffs, proposals, and promoted durable knowledge.
 
-## Install with an agent from the repository URL
+## Core installation and runtime
 
-Give a shell-capable coding agent this repository URL and an explicit new destination on a Linux host:
+agent-KB is standalone. Install the package with Node 26, then initialize its agent-KB-owned database:
 
-> Install the portable agent-memory vault from `https://github.com/CoreSaint/agent-kb` into `<destination>`. Follow `INSTALL.md`; do not use sudo or overwrite existing files.
+```sh
+npm install
+./bin/kb init
+./bin/kb status
+```
 
-[INSTALL.md](INSTALL.md) is the authoritative first-copy bootstrap for the Linux-only fresh-vault V1 preview. For repository-URL installs, the agent clones the repository into a private temporary directory, builds the ignored host-native Linux release archive with `npm run build:release`, extracts it, invokes the packaged `install.sh`, verifies the vault-local database and reusable skill, then removes temporary source/build files after success. Do not initialize the repository's source `vault/` directory in place.
+The default database is exactly `$HOME/.local/share/agent-kb/kb.sqlite`, independent of the working directory, vault markers, symlinks, or repository location. Only `kb init` creates it. Ordinary commands fail closed when it is absent, invalid, needs migration, or does not match `AGENT_KB_EXPECTED_DOMAIN`.
 
-## Install from a release archive
-
-For offline or reproducible installs on Linux, give the agent a downloaded `agent-kb-<version>-linux-<arch>.tar.gz` release archive and say:
-
-> Install the portable agent-memory vault from this archive into `<destination>`. Follow `INSTALL.md`; do not use sudo, contact the network, or overwrite existing files.
-
-The release archive provides the same single entry point, `install.sh`, that copies the `vault/` scaffold, installs the packaged tool into ignored `<destination>/.agent-kb/tool`, installs or validates the reusable skill, initializes the vault-local SQLite database, verifies paths and modes, and reports the installed paths/version.
-
-Maintainers build the ignored host-native Linux release artifact with `npm run build:release`; the build and installer reject non-Linux hosts. `npm run test:release-package` verifies archive contents and a real extracted install using a disposable `HOME`. `npm run test:repository-install` verifies the repository-URL workflow using a local synthetic Git source with no network.
-
-## Memory architecture and authority
-
-agent-KB is the runtime authority for curated agent continuity within its scope, including promoted typed records. In a contract vault, reviewed Markdown remains the human-facing authority. Agent-KB never overrides canonical vault policy or documentation, repository code and repository-local documentation, or live external-system state in their respective domains. Agents should inspect those canonical sources directly before acting when current truth matters; a KB hit provides durable agent knowledge and continuity within its scope, not a replacement for domain authority outside it.
-
-Records have a type-specific lifecycle:
-
-- Agents capture uncertain durable knowledge as an open `proposal`. Explicit promotion creates an active durable `decision`, `procedure`, `troubleshoot`, `landscape`, or `preference`, then marks the proposal `promoted`.
-- `handoff` records carry bounded work-in-progress continuity and move from `open` or `blocked` to `closed`, then may be archived.
-- Durable records remain active until explicitly superseded, deprecated, or archived. Maintenance reports lifecycle candidates but does not silently promote or rewrite knowledge.
-
-Schema v2 keeps promotion provenance and replacement lineage independent. `promoted_from` points from a durable record to its source proposal or explicitly promoted handoff. `superseded_by` points from an older record to its replacement. Promoting sets `promoted_from`; superseding sets `superseded_by` without erasing promotion provenance.
-
-Session transcripts and observational summaries are execution context, not durable knowledge sources or ingestion feeds. They do not promote records, replace handoffs, or become authoritative agent-KB content.
-
-Explicit non-goals:
-
-- no whole-repository memory or repository indexing;
-- no automatic transcript or observational-memory promotion;
-- no Hindsight capture or mutation;
-- no embeddings, vector retrieval, or active recall yet.
-
-## Copyable vault template
-
-`vault/` is the minimal agent-agnostic deployable scaffold; the folder name does not rename the `kb` CLI or `.agent-kb/kb.sqlite`. Release installation supplies the local tool under `.agent-kb/tool/`, installs the reusable source skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initializes vault-local SQLite through `./kb`, verifies status/path/modes, and removes `INIT.md` only after every check succeeds. `CONTRACT.md` remains the complete in-folder authority when global skills are unavailable; `AGENTS.md` is only a thin host/harness adapter.
-
-The automated template smoke test never clones or installs globally. It copies the scaffold to a disposable directory, supplies this repository as the local tool checkout, and installs the skill only below a temporary `HOME`.
-
-## CLI and database attachment
-
-Only `kb init` creates a parent directory, SQLite file, schema, or authority metadata. Every command that reads or writes records requires an existing initialized database and fails with `DB_NOT_INITIALIZED` instead of creating one. `help`, `version`, `contract`, and `path` do not open the database. Migration also requires an existing schema-v1 database.
+`AGENT_KB_PATH` is an explicit highest-priority development/test override:
 
 ```sh
 export AGENT_KB_PATH=/private/agent-kb/kb.sqlite
 ./bin/kb init
 ./bin/kb status
-./bin/kb upsert --id handoff:demo --type handoff --title "Demo" --summary "Open handoff"
-./bin/kb search demo --type handoff
-./bin/kb promote proposal:demo --type decision --id decision:demo
 ```
 
-Database path precedence is deterministic:
+New databases receive an authority-domain UUID. Public adapters must pin both the database path and `AGENT_KB_EXPECTED_DOMAIN`. To attach a pre-existing schema-v3 unbound database without reinitializing it, use the administrative one-transaction operation:
 
-1. A non-empty `AGENT_KB_PATH` is the explicit highest-priority override.
-2. Otherwise, agent-KB resolves the physical process working directory and walks upward to the first directory containing regular files named both `CONTRACT.md` and `MAP.md`. That contract vault uses `<vault>/.agent-kb/kb.sqlite`.
-3. If no contract vault is found, the compatibility fallback remains `~/.local/share/agent-kb/kb.sqlite`.
+```sh
+AGENT_KB_PATH=/private/existing.sqlite \
+  ./bin/kb bind-domain --authority-domain 123e4567-e89b-42d3-a456-426614174000 --json
+```
 
-Physical resolution means a cwd reached through a symlink discovers the vault containing the symlink target, not the directory containing the symlink. Path resolution and ordinary reads never create `.agent-kb` or SQLite files. Explicit init may create `.agent-kb` with mode `0700`, creates the schema-v3 database with mode `0600`, and never changes the contract-vault root's permissions. Init also stores a generated, non-secret authority-domain UUID. Tests may supply a validated UUID with `kb init --authority-domain UUID`; `kb status` returns it without mutation.
+It validates schema and SQLite integrity, refuses an already-bound database (including the same UUID), and never returns record bodies.
 
-Public adapters should bind attachment by setting `AGENT_KB_EXPECTED_DOMAIN` to the UUID returned by init or status. A wrong UUID, or any expected UUID against a legacy unbound database, fails closed with `DOMAIN_MISMATCH`. Existing in-process callers remain compatible: an existing schema-v3 database without authority metadata opens when no expected-domain binding is supplied, and status reports a null domain until it is explicitly reinitialized outside this contract slice.
+## Optional vault integration kit
+
+`vault/`, `skills/agent-memory-vault/`, `INSTALL.md`, and the release installer are optional portable vault-integration assets. They are not needed to install or operate agent-KB core. They retain their own installer and integration tests; their vault-local `.agent-kb` arrangement is not a core default and core resolution never discovers it.
+
+## Memory architecture and authority
+
+agent-KB is the runtime authority for curated continuity within its own records. It never overrides canonical repository code and documentation, reviewed vault policy, or live external-system state. Records are explicit proposals, handoffs, and promoted durable knowledge; schema/search/ranking behavior remains local and lexical.
 
 - `kb search` defaults to **TOON** compact hits (id, type, status, project, confidence, title, summary).
 - Other interactive commands retain readable JSON output.
@@ -134,7 +103,7 @@ Slice 1 does not provide a universal orchestrator, T1 probation lifecycle, tool-
 
 ## Slice-2 Stage-0 repository adapters
 
-The repository Pi extension source now exposes schema-v3 write fields plus two strict assembly tools. `kb_assemble` is the generic operational-troubleshooting adapter: it accepts bounded canonical snippets but deliberately has no `live_verified_record_ids` or receipt input, so mutable/stale R2/R3 records remain blocked. `kb_git_preflight_assemble` is the specialized trust boundary for the approved `/var/home/marcin/Repo/agent-kb` + `origin` + `https://github.com/CoreSaint/agent-kb` canary. Its public schema has no record-id input: only the fixed `troubleshoot:git-prepush-canary` may be projected, after the store proves it is an active/done troubleshoot with at least one approved Git live-evidence URI, no unrelated live URI, and no pointer evidence.
+The repository Pi extension source now exposes schema-v3 write fields plus two strict assembly tools. `kb_assemble` is the generic operational-troubleshooting adapter: it accepts bounded canonical snippets but deliberately has no `live_verified_record_ids` or receipt input, so mutable/stale R2/R3 records remain blocked. `kb_git_preflight_assemble` is the specialized trust boundary for the configured approved repository, remote, and URL canary. Its public schema has no record-id input: only the fixed `troubleshoot:git-prepush-canary` may be projected, after the store proves it is an active/done troubleshoot with at least one approved Git live-evidence URI, no unrelated live URI, and no pointer evidence.
 
 The verifier checks repository root, branch, HEAD, clean status, and exact remote URL both before and after the remote-ref/object/ancestry checks, then requires a second identical remote ref and SHA immediately before receipt issuance. The default runner inherits only `PATH`, replaces HOME/XDG and Git configuration sources with neutral locations, disables credential helpers, terminal prompting, and askpass, bounds time/output, and suppresses every unapproved remote URL. Neither tool mutates Git. `gate.allowed=true` is necessary for R2/R3 reliance but never authorizes push or another external write; domain and external-write approval remain separate. Receipts are immutable, non-secret, in-memory, fresh for at most 60 seconds, never accepted as tool input, and never persisted.
 

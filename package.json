@@ -7,7 +7,7 @@
   },
   "scripts": {
     "kb": "node ./src/cli.ts",
-    "smoke": "node ./src/cli.ts init",
+    "smoke": "node ./scripts/test-cli-contract.mjs",
     "smoke:search": "node ./scripts/smoke-hybrid-search.mjs",
     "smoke:toon": "node ./scripts/smoke-toon-format.mjs",
     "smoke:maintenance": "node ./scripts/smoke-maintenance.mjs",
@@ -18,6 +18,8 @@
     "smoke:mnemosyne-slice2": "node ./scripts/smoke-mnemosyne-slice2.mjs",
     "smoke:extension-wrapper": "node ./scripts/smoke-extension-wrapper.mjs",
     "test:contract": "node ./scripts/test-cli-contract.mjs",
+    "test:domain-binding": "node ./scripts/test-domain-binding.mjs",
+    "test:runtime-staging": "node ./scripts/test-runtime-staging.mjs",
     "test:vault-discovery": "node ./scripts/test-vault-discovery.mjs",
     "smoke:vault-template": "node ./scripts/smoke-vault-template.mjs",
     "build:release": "node ./scripts/build-release.mjs",

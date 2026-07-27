@@ -8,7 +8,7 @@ Create a local typed SQLite knowledge base, agent-agnostic vault template, and p
 
 - Language: TypeScript or plain Node ESM/CJS that runs on Node 26+
 - DB: `node:sqlite` (built-in). No better-sqlite3 unless necessary.
-- DB path precedence: explicit `AGENT_KB_PATH`; otherwise the nearest physical cwd ancestor containing regular `CONTRACT.md` and `MAP.md` files uses `.agent-kb/kb.sqlite`; otherwise compatibility fallback `~/.local/share/agent-kb/kb.sqlite`
+- DB path precedence: explicit `AGENT_KB_PATH`; otherwise exactly `$HOME/.local/share/agent-kb/kb.sqlite`, independent of cwd or vault markers
 - No embeddings, no repo ingest, no network, no Hindsight API
 - Do not commit/push unless asked
 - Do not store secrets; reject obvious secret patterns on upsert
@@ -33,9 +33,9 @@ Create a local typed SQLite knowledge base, agent-agnostic vault template, and p
                     # source for ~/.agents/skills/agent-memory-vault/
 ```
 
-The deployable `vault/` scaffold contains concise human/agent instructions, contract-vault markers, the local `kb` launcher, ignored `.agent-kb/` runtime state, and `.gitkeep` files only for required empty directories. `INIT.md` directs an agent to install `https://github.com/CoreSaint/agent-kb.git` at `.agent-kb/tool/`, install the repository skill at `~/.agents/skills/agent-memory-vault/SKILL.md`, initialize `.agent-kb/kb.sqlite`, verify it, and remove `INIT.md` only after success.
+`vault/`, the portable vault skill, `INSTALL.md`, and release bootstrap remain optional integration assets. They do not define core database resolution or runtime state. Core setup never creates or discovers `<vault>/.agent-kb`; it initializes only the agent-KB-owned default path or an explicit `AGENT_KB_PATH`.
 
-Portable setup is CLI- and filesystem-based. It has no harness APIs, extension dependency, or machine-specific absolute path. The in-folder `CONTRACT.md` is the complete behavioral fallback when global skills are unavailable; `AGENTS.md` is a thin host/harness adapter and does not duplicate policy. The existing `extension/` directory is optional legacy Pi integration and is neither installed nor required by the template.
+The `extension/` directory is optional Pi integration. Deployed adapters must use a private real wrapper pinned to a validated staged runtime, database path, and authority-domain UUID; they must never import mutable repository source.
 
 ## Schema
 
@@ -101,11 +101,12 @@ Schema version is 3. New databases bootstrap directly at v3. Existing schema-v1 
 
 `kb init` is the only path that creates directories, a database, schema, or authority metadata. All ordinary commands open an existing schema-v3 database and fail closed if it is absent or needs migration. `kb migrate` requires an existing schema-v1 or schema-v2 database. `help`, `version`, `contract`, and `path` do not attach to SQLite.
 
-Vault discovery resolves symlinks to the physical cwd before walking upward. It is read-only. Explicit init may create the discovered vault's `.agent-kb` directory privately, but must not chmod or otherwise mutate the pre-existing vault root.
+Core path resolution does not inspect cwd, symlinks, vault markers, or repository files. Explicit init may create only the parent directory of the default or explicit database path.
 
 ```text
 kb init [--authority-domain UUID] [--json]
 kb migrate [--apply] [--json]
+kb bind-domain --authority-domain UUID [--json]
 kb version [--json]
 kb contract [--json]
 kb search <query> [--type t] [--status s] [--project p] [--limit n] [--json]
@@ -122,19 +123,17 @@ kb path [--json]
 
 Contract version `1` machine mode is explicitly requested with `--json`. It emits exactly one success or error envelope on stdout, leaves stderr empty, and exits `0` on success, `2` on stable contract errors, or `1` on internal failure. Stable error codes distinguish uninitialized database, authority mismatch, not found, invalid input/command, schema mismatch/migration required, conflict, and internal failure.
 
-Init writes `meta.authority_domain_id`. Public adapters set `AGENT_KB_EXPECTED_DOMAIN`; mismatch or a bound adapter attaching to a legacy unbound database fails closed. Existing in-process callers may open an existing unbound schema-v3 database when no expected domain is configured.
+Init writes `meta.authority_domain_id`. `kb bind-domain` binds only an existing schema-v3 unbound database after schema, integrity, and foreign-key validation in one write transaction; it refuses every pre-bound database. Public adapters pin `AGENT_KB_PATH` and `AGENT_KB_EXPECTED_DOMAIN`; mismatch or an unbound database fails closed.
 
 Structured upsert/promote input rejects unknown fields. Tags and canonical IDs remain strict string arrays. Legacy `evidence` string arrays remain accepted and are stored as weak pointers; `evidence_items` accepts strict discriminated objects. CLI and `KbStore.upsert()` both reject requests containing both evidence forms. Full records preserve `evidence` as URI strings and add `evidence_items`. Promotion never uses general upsert semantics to replace an existing durable ID.
 
 `KbStore.assemble()` receives validated input and queries only existing troubleshooting search/ranking. The CLI validates `query`, `risk_class`, deterministic `now`, supplied canonical snippets, live-verified record IDs, and fixed upper bounds (5 memory records, 3 canonical snippets, 6000 packed-context characters); canonical verification from later than `now` is invalid. Staleness uses the inclusive `expires_at <= now` boundary. Required canonical snippets pack before memory. Returned context is always within the configured character limit and exposes `omitted_memory_ids` and `omitted_canonical_ids`. R0/R1 expose a bounded degraded pack; R2/R3 fail closed for missing or omitted live/canonical verification, omitted relevant memory, selected lineage conflicts, canonical overflow, or context overflow. The pure assembler performs no external calls. T1 provisional lifecycle, orchestration, wrappers/connectors, embeddings, event journaling, and automatic capture remain out of scope.
 
-## Portable skill and optional legacy integration
+## Optional vault integration and deployed adapters
 
-The source skill is `skills/agent-memory-vault/SKILL.md`. Bootstrap installs it at `~/.agents/skills/agent-memory-vault/SKILL.md` using private user directories. An absent target is copied, a byte-identical target is accepted, and a differing target is a fail-closed conflict that is never overwritten.
+The portable vault skill and `vault/` scaffold are optional integration assets. They may retain vault-local bootstrap behavior, but that behavior is never the core default or a core discovery mechanism.
 
-The skill uses cwd contract-vault discovery and only the root `./kb` launcher. It provides search/get, handoff, proposal, promotion, and fail-closed assembly mechanics while deferring behavior, authority, lifecycle, and safety policy to `CONTRACT.md`. Portable assembly may perform a first pass and reassemble with verified canonical snippets, but it must never supply generic CLI `live_verified_record_ids`; no portable verifier-owned wrapper exists in Stage 0, so an R2/R3 live-verification requirement remains blocked.
-
-The repository's `extension/` directory remains optional Pi integration outside the deployable template. Its Stage-0 source exposes strict schema-v3 write fields, a generic `kb_assemble` that cannot accept receipts or live-verification ids, and a specialized `kb_git_preflight_assemble` fixed to `troubleshoot:git-prepush-canary`, `/var/home/marcin/Repo/agent-kb`, `origin`, and `https://github.com/CoreSaint/agent-kb`. The public specialized schema has no record-id input. Before any Git command, the wrapper requires the fixed record to be an active/done troubleshoot with approved Git live evidence, no unrelated live URI, and no pointer. The verifier performs only bounded, non-interactive Git reads, never fetches, blocks when the remote object is absent locally, repeats root/branch/HEAD/clean-status/remote-URL checks after ancestry, and then requires a second identical remote ref and SHA before issuing a receipt. Its minimal environment inherits only `PATH`, neutralizes HOME/XDG and system/global Git configuration, disables helpers/prompts/askpass, and suppresses unapproved remote output. R2/R3 gate success remains distinct from domain and external-write authorization.
+`extension/` source is optional Pi integration. Deploy it only from a staged runtime: `scripts/stage-immutable-runtime.mjs --commit <SHA>` stages a commit, and `--worktree-snapshot` makes a race-checked copy of Git-tracked source plus only explicitly requested, unignored untracked paths; neither mode changes refs, index, or commits. The staging manifest is deterministic and excludes release/runtime/database/log artifacts. `scripts/write-extension-wrapper.mjs` writes real private CLI and Pi wrappers pinned to the staged runtime, database, and domain. A wrapper honors an advanced override only when both `AGENT_KB_PATH` and `AGENT_KB_EXPECTED_DOMAIN` are supplied; a path-only override keeps the installed domain and therefore fails closed against another database.
 
 ## Acceptance checks
 

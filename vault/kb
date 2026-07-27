@@ -3,10 +3,34 @@ set -eu
 
 vault_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 tool="$vault_root/.agent-kb/tool/bin/kb"
+database="$vault_root/.agent-kb/kb.sqlite"
+domain_file="$vault_root/.agent-kb/authority-domain"
 
 if [ ! -x "$tool" ]; then
   echo "kb tool is not initialized; ask the agent to process INIT.md first." >&2
   exit 1
+fi
+case "${1:-}" in
+  version|contract|help|-h|--help) exec "$tool" "$@" ;;
+esac
+
+
+if [ -z "${AGENT_KB_PATH:-}" ] || [ -z "${AGENT_KB_EXPECTED_DOMAIN:-}" ]; then
+  if [ -L "$domain_file" ] || [ ! -f "$domain_file" ] || [ "$(wc -c <"$domain_file")" -ne 37 ] || [ "$(stat -c %a "$domain_file")" != 600 ]; then
+    echo "kb authority domain is not initialized; refuse to use an unbound database." >&2
+    exit 1
+  fi
+  domain=$(cat "$domain_file")
+  case "$domain" in
+    ????????-????-[1-8]???-[89aAbB]???-????????????) ;;
+    *) echo "kb authority domain is invalid; refuse to use an unbound database." >&2; exit 1 ;;
+  esac
+  if [ -z "${AGENT_KB_PATH:-}" ]; then
+    AGENT_KB_PATH="$database"
+    export AGENT_KB_PATH
+  fi
+  AGENT_KB_EXPECTED_DOMAIN=$domain
+  export AGENT_KB_EXPECTED_DOMAIN
 fi
 
 exec "$tool" "$@"

@@ -147,6 +147,9 @@ try {
   assert.equal(statusEnvelope.data.schemaVersion, 3);
   assert.equal(statSync(join(destination, ".agent-kb")).mode & 0o777, 0o700);
   assert.equal(statSync(join(destination, ".agent-kb", "kb.sqlite")).mode & 0o777, 0o600);
+  assert.equal(installed.report.authorityDomainFile, join(resolve(destination), ".agent-kb", "authority-domain"));
+  assert.equal(readFileSync(installed.report.authorityDomainFile, "utf8"), `${statusEnvelope.data.authorityDomainId}\n`);
+  assert.equal(statSync(installed.report.authorityDomainFile).mode & 0o777, 0o600);
   assert.equal(existsSync(join(destination, "INIT.md")), false, "installer left INIT.md after verified install");
   assert.equal(existsSync(join(source, "vault", ".agent-kb")), false, "synthetic source vault was initialized");
   assert.equal(existsSync(join(source, "release")), false, "synthetic source was built in place");

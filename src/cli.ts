@@ -8,7 +8,7 @@ import {
   validateTimestamp,
 } from "./assembler.ts";
 import { formatHitsToon } from "./format.ts";
-import { kbPath } from "./db.ts";
+import { bindAuthorityDomain, kbPath } from "./db.ts";
 import { asKbError, KbError } from "./errors.ts";
 import { migrateDatabase } from "./migration.ts";
 import { createStore, initializeStore, type KbStore } from "./store.ts";
@@ -244,6 +244,7 @@ function human(value: unknown): void {
 
 function usage(): string {
   return `kb init [--authority-domain UUID] [--json]
+kb bind-domain --authority-domain UUID [--json]
 kb migrate [--apply] [--json]
 kb path [--json]
 kb version [--json]
@@ -273,7 +274,7 @@ Promote JSON fields: id, type, title, status, project, tags, body, summary, conf
 Assemble JSON fields: query, risk_class, now, canonical_snippets, live_verified_record_ids, limits.
 Promotion and replacement lineage are managed by promote and supersede; they are not accepted as upsert fields.
 
-Only init creates a database. Without AGENT_KB_PATH, the nearest physical cwd ancestor containing CONTRACT.md and MAP.md uses .agent-kb/kb.sqlite; otherwise the legacy home path is used. Set AGENT_KB_EXPECTED_DOMAIN to bind adapter attachment to an initialized authority-domain UUID.`;
+Only init creates a database. Without AGENT_KB_PATH, agent-KB uses $HOME/.local/share/agent-kb/kb.sqlite regardless of cwd. bind-domain binds an existing schema-v3 unbound database to a UUID. Set AGENT_KB_EXPECTED_DOMAIN to bind adapter attachment to an initialized authority-domain UUID.`;
 }
 
 const contract = {
@@ -286,7 +287,7 @@ const contract = {
   exit_codes: { success: 0, contract_error: 2, internal_failure: 1 },
   streams: { success: "one JSON envelope on stdout; stderr empty", error: "one JSON envelope on stdout; stderr empty", interactive_error: "message on stderr" },
   authority_binding: "Set AGENT_KB_EXPECTED_DOMAIN to the UUID returned by init/status.",
-  path_resolution: "AGENT_KB_PATH; else nearest physical cwd ancestor with regular CONTRACT.md and MAP.md files; else ~/.local/share/agent-kb/kb.sqlite.",
+  path_resolution: "AGENT_KB_PATH; else ~/.local/share/agent-kb/kb.sqlite, independent of cwd.",
 };
 
 let store: KbStore | undefined;
@@ -308,6 +309,9 @@ try {
     assertFlags(flags, ["authority-domain", "json", "human"]); noArguments(args, cmd);
     store = initializeStore(optionalFlag(flags, "authority-domain"));
     data = store.init();
+  } else if (cmd === "bind-domain") {
+    assertFlags(flags, ["authority-domain", "json", "human"]); noArguments(args, cmd);
+    data = { path: kbPath(), authorityDomainId: bindAuthorityDomain(kbPath(), requiredFlag(flags, "authority-domain")) };
   } else if (cmd === "migrate") {
     assertFlags(flags, ["apply", "json", "human"]); noArguments(args, cmd);
     data = migrateDatabase(kbPath(), flags.apply === true);

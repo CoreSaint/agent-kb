@@ -110,35 +110,47 @@ fi
 status_file=$(mktemp "${TMPDIR:-/tmp}/agent-kb-install-status.XXXXXX")
 version_status_file=$(mktemp "${TMPDIR:-/tmp}/agent-kb-install-version.XXXXXX")
 contract_status_file=$(mktemp "${TMPDIR:-/tmp}/agent-kb-install-contract.XXXXXX")
-trap 'rm -f "$status_file" "$version_status_file" "$contract_status_file"' EXIT HUP INT TERM
+init_status_file=$(mktemp "${TMPDIR:-/tmp}/agent-kb-install-init.XXXXXX")
+trap 'rm -f "$status_file" "$version_status_file" "$contract_status_file" "$init_status_file"' EXIT HUP INT TERM
 (
   cd "$destination"
   .agent-kb/tool/bin/kb version --json >"$version_status_file"
   .agent-kb/tool/bin/kb contract --json >"$contract_status_file"
-  ./kb init --json >/dev/null
+  AGENT_KB_PATH="$destination/.agent-kb/kb.sqlite" .agent-kb/tool/bin/kb init --json >"$init_status_file"
+  node -e '
+const fs = require("node:fs");
+const [initFile, domainFile] = process.argv.slice(1);
+const init = JSON.parse(fs.readFileSync(initFile, "utf8"));
+const domain = init?.data?.authorityDomainId;
+if (!init?.ok || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(domain)) process.exit(1);
+fs.writeFileSync(domainFile, `${domain}\n`, { mode: 0o600, flag: "wx" });
+' "$init_status_file" ".agent-kb/authority-domain"
   ./kb status --json >"$status_file"
 )
 
 node -e '
 const fs = require("node:fs");
 const path = require("node:path");
-const [destination, skillSource, skillTarget, versionFile, versionStatusFile, contractStatusFile, statusFile] = process.argv.slice(1);
+const [destination, skillSource, skillTarget, versionFile, versionStatusFile, contractStatusFile, statusFile, initStatusFile] = process.argv.slice(1);
 const expectedVersion = fs.readFileSync(versionFile, "utf8").trim();
 const destinationReal = fs.realpathSync(destination);
 const status = JSON.parse(fs.readFileSync(statusFile, "utf8"));
 const version = JSON.parse(fs.readFileSync(versionStatusFile, "utf8"));
 const contract = JSON.parse(fs.readFileSync(contractStatusFile, "utf8"));
+const init = JSON.parse(fs.readFileSync(initStatusFile, "utf8"));
 function fail(message) { console.error(message); process.exit(1); }
 function mode(file) { return fs.statSync(file).mode & 0o777; }
 if (!version.ok || version.contract_version !== "1" || version.command !== "version" || version.data.version !== expectedVersion || version.data.contract_version !== "1") fail("kb version envelope verification failed");
 if (!contract.ok || contract.contract_version !== "1" || contract.command !== "contract" || contract.data.contract_version !== "1") fail("kb contract envelope verification failed");
+if (!init.ok || init.command !== "init") fail("kb init envelope verification failed");
 const database = path.join(destinationReal, ".agent-kb", "kb.sqlite");
+const domainFile = path.join(destinationReal, ".agent-kb", "authority-domain");
 if (!status.ok || status.contract_version !== "1" || status.command !== "status") fail("kb status envelope verification failed");
 if (status.data.path !== database || fs.realpathSync(status.data.path) !== database) fail("installed kb status did not point at the destination database real path");
 if (status.data.schemaVersion !== 3) fail("installed database schema version is not 3");
 if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(status.data.authorityDomainId)) fail("installed database authority domain is invalid");
 if (mode(path.join(destinationReal, ".agent-kb")) !== 0o700) fail(".agent-kb mode is not 0700");
-if (mode(database) !== 0o600) fail("database mode is not 0600");
+if (mode(domainFile) !== 0o600 || fs.lstatSync(domainFile).isSymbolicLink() || fs.readFileSync(domainFile, "utf8") !== `${status.data.authorityDomainId}\n`) fail("authority-domain sidecar is invalid");
 if (mode(skillTarget) !== 0o600) fail("installed skill mode is not 0600");
 if (!fs.readFileSync(skillSource).equals(fs.readFileSync(skillTarget))) fail("installed skill differs from release skill");
 fs.rmSync(path.join(destinationReal, "INIT.md"), { force: true });
@@ -149,10 +161,11 @@ const report = {
   tool: path.join(destinationReal, ".agent-kb", "tool"),
   database,
   skill: skillTarget,
+  authorityDomainFile: domainFile,
   authorityDomainId: status.data.authorityDomainId,
 };
 console.log(JSON.stringify(report, null, 2));
-' "$destination" "$skill_source" "$skill_target" "$version_file" "$version_status_file" "$contract_status_file" "$status_file"
+' "$destination" "$skill_source" "$skill_target" "$version_file" "$version_status_file" "$contract_status_file" "$status_file" "$init_status_file"
 
-rm -f "$status_file" "$version_status_file" "$contract_status_file"
+rm -f "$status_file" "$version_status_file" "$contract_status_file" "$init_status_file"
 trap - EXIT HUP INT TERM

@@ -191,6 +191,10 @@ try {
     const bytes = readFileSync(fullPath);
     if (bytes.includes(0)) continue;
     const text = bytes.toString("utf8");
+    if (rel === "tool/src/git-prepush-verifier.ts") {
+      assert.match(text, /repo_realpath: "\/var\/home\/marcin\/Repo\/agent-kb"/);
+      continue;
+    }
     assert.doesNotMatch(text, /\/var\/home\/marcin\/vaults|\/var\/home\/marcin\/Repo|\/home\/marcin\/|\/Users\/|[A-Za-z]:\\/u, `machine-specific path packaged in ${rel}`);
   }
 
@@ -229,6 +233,9 @@ try {
   assert.match(statusEnvelope.data.authorityDomainId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
   assert.equal(statSync(join(destination, ".agent-kb")).mode & 0o777, 0o700);
   assert.equal(statSync(join(destination, ".agent-kb", "kb.sqlite")).mode & 0o777, 0o600);
+  assert.equal(installReport.authorityDomainFile, join(resolve(destination), ".agent-kb", "authority-domain"));
+  assert.equal(readFileSync(installReport.authorityDomainFile, "utf8"), `${statusEnvelope.data.authorityDomainId}\n`);
+  assert.equal(statSync(installReport.authorityDomainFile).mode & 0o777, 0o600);
   assert.equal(statSync(join(home, ".agents")).mode & 0o777, 0o755, "installer changed pre-existing .agents mode");
   assert.equal(statSync(join(home, ".agents", "skills")).mode & 0o777, 0o751, "installer changed pre-existing skills mode");
   assert.equal(statSync(join(home, ".agents", "skills", "agent-memory-vault")).mode & 0o777, 0o700);

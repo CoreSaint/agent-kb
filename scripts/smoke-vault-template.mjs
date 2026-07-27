@@ -36,8 +36,8 @@ delete environment.AGENT_KB_EXPECTED_DOMAIN;
 assert.ok(resolve(home).startsWith(`${resolve(root)}/`));
 mkdirSync(home, { mode: 0o700 });
 
-function run(program, args = []) {
-  return spawnSync(program, args, { cwd: copy, env: environment, encoding: "utf8" });
+function run(program, args = [], extraEnvironment = {}) {
+  return spawnSync(program, args, { cwd: copy, env: { ...environment, ...extraEnvironment }, encoding: "utf8" });
 }
 
 function installSkill(sourcePath, targetPath) {
@@ -63,11 +63,11 @@ try {
   const rootReadme = readFileSync(join(repository, "README.md"), "utf8");
   const rootInstall = readFileSync(join(repository, "INSTALL.md"), "utf8");
   const rootAgents = readFileSync(join(repository, "AGENTS.md"), "utf8");
-  assert.match(rootReadme, /\[INSTALL\.md\]\(INSTALL\.md\)/);
-  assert.match(rootReadme, /Do not initialize the repository's source `vault\/` directory in place/i);
-  assert.match(rootReadme, /Install the portable agent-memory vault from `https:\/\/github\.com\/CoreSaint\/agent-kb` into `<destination>`/);
-  assert.doesNotMatch(rootReadme, /INIT\.md` clones|installs the repository into ignored `\.agent-kb\/tool/i);
-  assert.match(rootReadme, /Linux-only fresh-vault V1 preview/);
+  assert.match(rootReadme, /## Core installation and runtime/);
+  assert.match(rootReadme, /\$HOME\/\.local\/share\/agent-kb\/kb\.sqlite/);
+  assert.match(rootReadme, /## Optional vault integration kit/);
+  assert.match(rootReadme, /not needed to install or operate agent-KB core/i);
+  assert.doesNotMatch(rootReadme, /nearest physical cwd ancestor/i);
   assert.match(rootInstall, /Obtain an explicit destination from the user/i);
   assert.match(rootInstall, /Linux-only V1 instructions/);
   assert.match(rootInstall, /destination must not already exist/i);
@@ -116,6 +116,7 @@ try {
   assert.match(instructions, /Release `install\.sh` normally supplies `\.agent-kb\/tool`/);
   assert.match(instructions, /\.agent-kb\/tool\/bin\/kb/);
   assert.match(instructions, /\.agent-kb\/kb\.sqlite/);
+  assert.match(instructions, /\.agent-kb\/authority-domain/);
   assert.match(instructions, /Remove it only after all checks succeed/);
   assert.match(instructions, /\.agents\/skills\/agent-memory-vault\/SKILL\.md/);
   assert.match(instructions, /refusing to overwrite/);
@@ -221,17 +222,35 @@ try {
   assert.equal(installSkill(skillSource, skillTarget), "installed");
 
   const rootMode = statSync(copy).mode & 0o777;
-  const init = run(join(copy, "kb"), ["init", "--authority-domain", domain, "--json"]);
+  const unbound = run(join(copy, "kb"), ["status", "--json"]);
+  assert.notEqual(unbound.status, 0, "launcher accepted a DB without its authority sidecar");
+  const init = run(join(copy, ".agent-kb", "tool", "bin", "kb"), ["init", "--authority-domain", domain, "--json"], { AGENT_KB_PATH: join(copy, ".agent-kb", "kb.sqlite") });
   assert.equal(init.status, 0, init.stdout || init.stderr);
   const initEnvelope = JSON.parse(init.stdout);
   const database = join(copy, ".agent-kb", "kb.sqlite");
   assert.equal(initEnvelope.ok, true);
   assert.equal(initEnvelope.data.path, database);
-
+  writeFileSync(join(copy, ".agent-kb", "authority-domain"), `${domain}\n`, { mode: 0o600 });
+  assert.equal(statSync(join(copy, ".agent-kb", "authority-domain")).mode & 0o777, 0o600);
   const status = run(join(copy, "kb"), ["status", "--json"]);
   assert.equal(status.status, 0, status.stdout || status.stderr);
   const statusEnvelope = JSON.parse(status.stdout);
   assert.equal(statusEnvelope.ok, true);
+  const alternateDatabase = join(root, "alternate.sqlite");
+  const alternateDomain = "88888888-8888-4888-8888-888888888888";
+  const alternateInit = run(join(copy, ".agent-kb", "tool", "bin", "kb"), ["init", "--authority-domain", alternateDomain, "--json"], { AGENT_KB_PATH: alternateDatabase });
+  assert.equal(alternateInit.status, 0, alternateInit.stdout || alternateInit.stderr);
+  assert.notEqual(run(join(copy, "kb"), ["status", "--json"], { AGENT_KB_PATH: alternateDatabase }).status, 0, "path-only override bypassed installed domain");
+  const domainOnly = run(join(copy, "kb"), ["status", "--json"], { AGENT_KB_EXPECTED_DOMAIN: alternateDomain });
+  assert.equal(domainOnly.status, 0, domainOnly.stderr || domainOnly.stdout);
+  assert.equal(JSON.parse(domainOnly.stdout).data.authorityDomainId, domain, "domain-only override replaced installed domain");
+  assert.equal(run(join(copy, "kb"), ["status", "--json"], { AGENT_KB_PATH: alternateDatabase, AGENT_KB_EXPECTED_DOMAIN: alternateDomain }).status, 0, "paired override was not honored");
+  const unboundDatabase = join(root, "unbound.sqlite");
+  const unboundInit = run(join(copy, ".agent-kb", "tool", "bin", "kb"), ["init", "--authority-domain", alternateDomain, "--json"], { AGENT_KB_PATH: unboundDatabase });
+  assert.equal(unboundInit.status, 0, unboundInit.stdout || unboundInit.stderr);
+  const unboundDelete = run(process.execPath, ["-e", `const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(${JSON.stringify(unboundDatabase)}); db.prepare("DELETE FROM meta WHERE key='authority_domain_id'").run(); db.close();`]);
+  assert.equal(unboundDelete.status, 0, unboundDelete.stderr);
+  assert.notEqual(run(join(copy, "kb"), ["status", "--json"], { AGENT_KB_PATH: unboundDatabase, AGENT_KB_EXPECTED_DOMAIN: alternateDomain }).status, 0, "unbound override database was accepted");
   assert.equal(statusEnvelope.data.path, database);
   assert.equal(statusEnvelope.data.schemaVersion, 3);
   assert.equal(statusEnvelope.data.authorityDomainId, domain);
